@@ -57,6 +57,61 @@ export function weekRange(utcMs: UtcMillis, tz: string): UtcRange {
   };
 }
 
+/* A zone independent calendar reading. This exists so that recurrence.ts can
+   talk to the rrule package without either side ever handling a Date whose
+   convention the other misreads: rrule's floating Dates carry wall clock in
+   their UTC fields, while date-fns-tz reads system local fields. Passing one
+   straight to the other shifts everything by the developer's machine offset,
+   and is invisible on a machine that happens to sit in the target zone. */
+export type WallClock = {
+  year: number;
+  month: number; // 1 based, matching rrule's datetime helper
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+};
+
+function pad(value: number, width = 2): string {
+  return String(value).padStart(width, "0");
+}
+
+export function wallClockOf(utcMs: UtcMillis, tz: string): WallClock {
+  const wall = toWall(utcMs, tz);
+  return {
+    year: wall.getFullYear(),
+    month: wall.getMonth() + 1,
+    day: wall.getDate(),
+    hour: wall.getHours(),
+    minute: wall.getMinutes(),
+    second: wall.getSeconds(),
+  };
+}
+
+/* Goes through the string overload of fromZonedTime, the same route
+   fromDateTimeLocal takes, so no Date intermediate can pick up the system
+   zone on the way. */
+export function utcFromWallClock(wall: WallClock, tz: string): UtcMillis {
+  const text =
+    `${pad(wall.year, 4)}-${pad(wall.month)}-${pad(wall.day)}` +
+    `T${pad(wall.hour)}:${pad(wall.minute)}:${pad(wall.second)}`;
+  return fromZonedTime(text, tz).getTime();
+}
+
+/* True when this reading does not exist in the zone, which is every wall clock
+   inside the hour a spring forward transition skips. Detected by round trip
+   rather than by consulting a transition table. */
+export function isNonexistentWallClock(wall: WallClock, tz: string): boolean {
+  const round = wallClockOf(utcFromWallClock(wall, tz), tz);
+  return (
+    round.hour !== wall.hour ||
+    round.minute !== wall.minute ||
+    round.day !== wall.day ||
+    round.month !== wall.month ||
+    round.year !== wall.year
+  );
+}
+
 export function shiftWeeks(utcMs: UtcMillis, tz: string, weeks: number): UtcMillis {
   return fromWall(addDays(toWall(utcMs, tz), weeks * DAYS_PER_WEEK), tz);
 }
