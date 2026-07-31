@@ -57,6 +57,14 @@ export function weekRange(utcMs: UtcMillis, tz: string): UtcRange {
   };
 }
 
+export function shiftWeeks(utcMs: UtcMillis, tz: string, weeks: number): UtcMillis {
+  return fromWall(addDays(toWall(utcMs, tz), weeks * DAYS_PER_WEEK), tz);
+}
+
+export function formatMonthYear(utcMs: UtcMillis, tz: string): string {
+  return formatInTimeZone(new Date(utcMs), tz, "MMMM yyyy");
+}
+
 export function dayRange(utcMs: UtcMillis, tz: string): UtcRange {
   return { start: startOfLocalDay(utcMs, tz), end: endOfLocalDay(utcMs, tz) };
 }
