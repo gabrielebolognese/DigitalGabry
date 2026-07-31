@@ -1,0 +1,199 @@
+@import "tailwindcss";
+
+/*
+  The only file in the app where a literal value may appear.
+
+  :root carries the canonical token names from SPEC section 3, so components
+  can reach a value with var() when no non-arbitrary utility exists for it.
+  The @theme blocks expose the same values to Tailwind as utility names.
+  Tokens whose SPEC name has no Tailwind namespace live in :root; tokens whose
+  name already matches a namespace are declared once inside @theme instead.
+*/
+
+:root {
+  /* Surfaces, SPEC 3.1. The app background is never #000000, because pure
+     black flattens elevation and turns hairlines into artifacts. */
+  --bg-app: #0b0b0c;
+  --bg-rail: #0e0e10;
+  --bg-surface: #121214;
+  --bg-elevated: #17171a;
+  --bg-hover: rgba(255, 255, 255, 0.045);
+  --bg-selected: rgba(255, 255, 255, 0.075);
+
+  /* Borders are always alpha white so they compose over any surface level. */
+  --border-hair: rgba(255, 255, 255, 0.055);
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  /* Text is never #FFFFFF, because it halates on near-black over long sessions. */
+  --text-primary: #ededec;
+  --text-secondary: #8e8e8c;
+  --text-tertiary: #5c5c5a;
+  --text-disabled: #3e3e3c;
+
+  --accent: #c96442;
+  --accent-weak: rgba(201, 100, 66, 0.13);
+  --accent-border: rgba(201, 100, 66, 0.4);
+
+  /* Category colors, SPEC 3.2. Icon tint and chart only, never a solid fill. */
+  --cat-build: #c96442;
+  --cat-build-weak: rgba(201, 100, 66, 0.13);
+  --cat-build-border: rgba(201, 100, 66, 0.4);
+
+  --cat-content: #5c86ae;
+  --cat-content-weak: rgba(92, 134, 174, 0.13);
+  --cat-content-border: rgba(92, 134, 174, 0.4);
+
+  --cat-admin: #6f9b6f;
+  --cat-admin-weak: rgba(111, 155, 111, 0.13);
+  --cat-admin-border: rgba(111, 155, 111, 0.4);
+
+  --cat-personal: #8e7ba8;
+  --cat-personal-weak: rgba(142, 123, 168, 0.13);
+  --cat-personal-border: rgba(142, 123, 168, 0.4);
+
+  --cat-deadline: #b08a4a;
+  --cat-deadline-weak: rgba(176, 138, 74, 0.13);
+  --cat-deadline-border: rgba(176, 138, 74, 0.4);
+
+  /* Type scale, SPEC 3.3. Nothing outside this list may appear anywhere. */
+  --fs-micro: 10px;
+  --fs-meta: 11px;
+  --fs-body: 12px;
+  --fs-title: 13px;
+  --fs-display: 15px;
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+
+  --tracking-micro: 0.06em;
+  --tracking-flat: 0;
+
+  --lh-dense: 1.25;
+  --lh-prose: 1.5;
+
+  /* Geometry, SPEC 3.4 */
+  --hairline: 1px;
+  --focus-ring: 0 0 0 1px var(--accent-border);
+
+  /* Motion, SPEC 3.5 */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --dur-hover: 80ms;
+  --dur-standard: 140ms;
+
+  /* Icons, SPEC 3.6 */
+  --icon-content: 14px;
+  --icon-rail: 16px;
+  --icon-stroke: 1.5;
+
+  /* Layout, SPEC 4 */
+  --rail-w: 52px;
+  --header-h: 38px;
+  --avatar-size: 26px;
+  --rail-item-w: 34px;
+  --rail-item-h: 30px;
+  --splitter-hit: 4px;
+  --panel-w-default: 320px;
+  --panel-w-min: 280px;
+  --panel-w-max: 480px;
+  --tooltip-gap: 8px;
+  --tooltip-delay: 400ms;
+}
+
+/* Declared inside @theme because the SPEC token name is already a Tailwind
+   namespace, so one declaration serves both var() and the utility. */
+@theme {
+  /* Clearing Tailwind's own scales means a colour, size, weight or radius from
+     outside the design system cannot be reached by a utility class at all.
+     The invariants in SPEC section 13 stop being a convention and start being
+     a build error. */
+  --color-*: initial;
+  --text-*: initial;
+  --font-weight-*: initial;
+  --radius-*: initial;
+
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  /* Stated in px, not the default 0.25rem, so the 4px grid cannot drift with
+     the root font size. */
+  --spacing: 4px;
+
+  --font-sans: "Geist", "Inter", -apple-system, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", monospace;
+
+  --radius-block: 4px;
+  --radius-control: 6px;
+  --radius-panel: 8px;
+
+  /* A media query cannot read a custom property, so the panel collapse
+     threshold has to be a breakpoint rather than a plain token. */
+  --breakpoint-panel: 1300px;
+}
+
+@theme inline {
+  --font-weight-regular: var(--fw-regular);
+  --font-weight-medium: var(--fw-medium);
+
+  --color-app: var(--bg-app);
+  --color-rail: var(--bg-rail);
+  --color-surface: var(--bg-surface);
+  --color-elevated: var(--bg-elevated);
+  --color-hover: var(--bg-hover);
+  --color-selected: var(--bg-selected);
+
+  --color-hair: var(--border-hair);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+
+  --color-primary: var(--text-primary);
+  --color-secondary: var(--text-secondary);
+  --color-tertiary: var(--text-tertiary);
+  --color-disabled: var(--text-disabled);
+
+  --color-accent: var(--accent);
+  --color-accent-weak: var(--accent-weak);
+  --color-accent-border: var(--accent-border);
+
+  --color-cat-build: var(--cat-build);
+  --color-cat-build-weak: var(--cat-build-weak);
+  --color-cat-build-border: var(--cat-build-border);
+  --color-cat-content: var(--cat-content);
+  --color-cat-content-weak: var(--cat-content-weak);
+  --color-cat-content-border: var(--cat-content-border);
+  --color-cat-admin: var(--cat-admin);
+  --color-cat-admin-weak: var(--cat-admin-weak);
+  --color-cat-admin-border: var(--cat-admin-border);
+  --color-cat-personal: var(--cat-personal);
+  --color-cat-personal-weak: var(--cat-personal-weak);
+  --color-cat-personal-border: var(--cat-personal-border);
+  --color-cat-deadline: var(--cat-deadline);
+  --color-cat-deadline-weak: var(--cat-deadline-weak);
+  --color-cat-deadline-border: var(--cat-deadline-border);
+
+  /* Size, weight and tracking travel together so the scale cannot be split. */
+  --text-micro: var(--fs-micro);
+  --text-micro--line-height: var(--lh-dense);
+  --text-micro--font-weight: var(--fw-medium);
+  --text-micro--letter-spacing: var(--tracking-micro);
+
+  --text-meta: var(--fs-meta);
+  --text-meta--line-height: var(--lh-dense);
+  --text-meta--font-weight: var(--fw-regular);
+  --text-meta--letter-spacing: var(--tracking-flat);
+
+  --text-body: var(--fs-body);
+  --text-body--line-height: var(--lh-dense);
+  --text-body--font-weight: var(--fw-regular);
+  --text-body--letter-spacing: var(--tracking-flat);
+
+  --text-title: var(--fs-title);
+  --text-title--line-height: var(--lh-dense);
+  --text-title--font-weight: var(--fw-medium);
+  --text-title--letter-spacing: var(--tracking-flat);
+
+  --text-display: var(--fs-display);
+  --text-display--line-height: var(--lh-dense);
+  --text-display--font-weight: var(--fw-medium);
+  --text-display--letter-spacing: var(--tracking-flat);
+}
