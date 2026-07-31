@@ -49,16 +49,18 @@ export default function AppShell({ view, onViewChange }: AppShellProps) {
       <Rail view={view} onViewChange={onViewChange} />
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="shell-header shrink-0 border-b border-hair" />
-        <div className="min-h-0 flex-1">
-          {view === "calendar" ? (
-            <WeekView />
-          ) : (
-            <div className="flex h-full items-center justify-center">
+        {/* Each view owns its own 38px header, because the calendar needs
+            period navigation in it and the placeholders do not. */}
+        {view === "calendar" ? (
+          <WeekView />
+        ) : (
+          <>
+            <header className="shell-header shrink-0 border-b border-hair" />
+            <div className="flex min-h-0 flex-1 items-center justify-center">
               <span className="text-title text-tertiary">{VIEW_LABELS[view]}</span>
             </div>
-          )}
-        </div>
+          </>
+        )}
       </main>
 
       {panelOpen && (

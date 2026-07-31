@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Generated benchmark fixture, 12MB, reproducible with `node scripts/seed.mjs`
+scripts/seed-blocks.sql

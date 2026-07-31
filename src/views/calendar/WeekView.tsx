@@ -9,7 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { v7 as uuidv7 } from "uuid";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import BlockBox from "../../components/Block";
 import Inspector from "../../components/Inspector";
 import Toast from "../../components/Toast";
@@ -19,6 +19,7 @@ import {
   type Block,
   type ScheduledBlock,
 } from "../../domain/block";
+import { uuidv7 } from "../../domain/id";
 import {
   layoutDay,
   type DayLayout,
@@ -36,12 +37,14 @@ import {
   daysOfWeek,
   endOfLocalDay,
   formatDayNumber,
+  formatMonthYear,
   formatWeekday,
   isSameLocalDay,
   localMinutesOfDay,
   minutesToPixels,
   minutesWithinDay,
   pixelsToMinutes,
+  shiftWeeks,
   snapToGrid,
   startOfLocalDay,
   utcFromDayMinutes,
@@ -237,9 +240,12 @@ type WeekViewProps = {
 export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
   const [hourHeight, setHourHeight] = useState<HourHeight>(DEFAULT_HOUR_HEIGHT);
   const [nowUtc, setNowUtc] = useState<UtcMillis>(() => Date.now());
-  const [anchorUtc] = useState<UtcMillis>(() => Date.now());
+  const [anchorUtc, setAnchorUtc] = useState<UtcMillis>(() => Date.now());
   const [drag, setDrag] = useState<Drag | null>(null);
-  const [toast, setToast] = useState<{ message: string; blockId: string } | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    undoBlockId: string | null;
+  } | null>(null);
   const [createdBlockId, setCreatedBlockId] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -257,8 +263,15 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
   const range = useMemo(() => weekRange(anchorUtc, tz), [anchorUtc, tz]);
   const days = useMemo(() => daysOfWeek(anchorUtc, tz), [anchorUtc, tz]);
 
-  const { blocks, createBlock, updateBlock, softDeleteBlock, restoreBlock } =
+  const { blocks, loading, error, createBlock, updateBlock, softDeleteBlock, restoreBlock } =
     useBlocks(range, tz);
+
+  // A write that the database rejected has already been rolled back in the
+  // store; the user still needs to be told the change did not stick.
+  useEffect(() => {
+    if (error === null) return;
+    setToast({ message: "Could not save, the change was rolled back", undoBlockId: null });
+  }, [error]);
 
   const selectedBlock: Block | null = useMemo(
     () => blocks.find((block) => block.id === selectedBlockId) ?? null,
@@ -519,7 +532,27 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
           target.tagName === "TEXTAREA" ||
           target.tagName === "SELECT" ||
           target.isContentEditable);
-      if (typing || selectedBlockId === null) return;
+      if (typing) return;
+
+      if (event.key === "t" || event.key === "T") {
+        event.preventDefault();
+        setAnchorUtc(Date.now());
+        return;
+      }
+
+      /* SPEC 10 gives the arrows to the previous and next period, PLAN phase 3
+         gives them to block selection. With a block selected they move the
+         selection; with nothing selected they move the week. */
+      if (selectedBlockId === null) {
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          setAnchorUtc((current) => shiftWeeks(current, tz, -1));
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          setAnchorUtc((current) => shiftWeeks(current, tz, 1));
+        }
+        return;
+      }
 
       if (event.key === "Enter") {
         event.preventDefault();
@@ -536,7 +569,7 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
       if (event.key === "Delete") {
         event.preventDefault();
         softDeleteBlock(selectedBlockId);
-        setToast({ message: "Block deleted", blockId: selectedBlockId });
+        setToast({ message: "Block deleted", undoBlockId: selectedBlockId });
         ui.clearSelection();
         return;
       }
@@ -612,8 +645,40 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
   const createGhost =
     drag !== null && drag.mode === "create" && drag.moved ? drag.preview : null;
 
+  const weekIsEmpty = !loading && layouts.every((layout) => layout.placed.length === 0);
+
   return (
     <div className="relative flex h-full min-h-0 flex-col">
+      <header className="shell-header flex shrink-0 items-center gap-1 border-b border-hair px-3">
+        <span className="text-title text-primary">
+          {formatMonthYear(range.start, tz)}
+        </span>
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={() => setAnchorUtc(Date.now())}
+          className="motion-hover rounded-control px-2 py-1 text-meta text-secondary hover:bg-hover hover:text-primary"
+        >
+          Today
+        </button>
+        <button
+          type="button"
+          aria-label="Previous week"
+          onClick={() => setAnchorUtc((current) => shiftWeeks(current, tz, -1))}
+          className="motion-hover flex rounded-control p-1 text-tertiary hover:bg-hover hover:text-primary"
+        >
+          <ChevronLeft className="icon-content" aria-hidden={true} />
+        </button>
+        <button
+          type="button"
+          aria-label="Next week"
+          onClick={() => setAnchorUtc((current) => shiftWeeks(current, tz, 1))}
+          className="motion-hover flex rounded-control p-1 text-tertiary hover:bg-hover hover:text-primary"
+        >
+          <ChevronRight className="icon-content" aria-hidden={true} />
+        </button>
+      </header>
+
       <div className="cal-day-header flex shrink-0 border-b border-hair">
         <div className="cal-gutter shrink-0" />
         {days.map((dayStart) => {
@@ -635,7 +700,15 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
         })}
       </div>
 
-      <div ref={scrollRef} className="cal-scroll min-h-0 flex-1 overflow-y-auto">
+      <div className="relative min-h-0 flex-1">
+        {weekIsEmpty && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+            <span className="text-meta text-tertiary">
+              Drag anywhere to add your first block
+            </span>
+          </div>
+        )}
+      <div ref={scrollRef} className="cal-scroll h-full overflow-y-auto">
         <div
           className="flex"
           style={{ "--hour-h": `${hourHeight}px` } as CSSProperties}
@@ -669,6 +742,7 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
           </div>
         </div>
       </div>
+      </div>
 
       {inspectorOpen && selectedBlock !== null && (
         <Inspector
@@ -683,14 +757,20 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
       {toast !== null && (
         <Toast
           message={toast.message}
-          action={{
-            label: "Undo",
-            onAct: () => {
-              restoreBlock(toast.blockId);
-              ui.selectBlock(toast.blockId);
-              setToast(null);
-            },
-          }}
+          action={
+            toast.undoBlockId === null
+              ? undefined
+              : {
+                  label: "Undo",
+                  onAct: () => {
+                    const id = toast.undoBlockId;
+                    if (id === null) return;
+                    restoreBlock(id);
+                    ui.selectBlock(id);
+                    setToast(null);
+                  },
+                }
+          }
           onDismiss={dismissToast}
         />
       )}

@@ -1,8 +1,8 @@
 [package]
 name = "digitalgabry"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Local first calendar and momentum tracker"
+authors = ["Gabriele B"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -20,6 +20,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
