@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import WeekView from "../views/calendar/WeekView";
 import Rail, { VIEW_LABELS, type ViewId } from "./Rail";
 import Splitter from "./Splitter";
 
@@ -49,8 +50,14 @@ export default function AppShell({ view, onViewChange }: AppShellProps) {
 
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="shell-header shrink-0 border-b border-hair" />
-        <div className="flex flex-1 items-center justify-center">
-          <span className="text-title text-tertiary">{VIEW_LABELS[view]}</span>
+        <div className="min-h-0 flex-1">
+          {view === "calendar" ? (
+            <WeekView />
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              <span className="text-title text-tertiary">{VIEW_LABELS[view]}</span>
+            </div>
+          )}
         </div>
       </main>
 

@@ -78,8 +78,8 @@ body,
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: var(--scrollbar-w);
+  height: var(--scrollbar-w);
 }
 
 ::-webkit-scrollbar-track,
@@ -177,6 +177,153 @@ body,
 
 .tooltip {
   margin-left: var(--tooltip-gap);
+}
+
+/* Calendar grid. The hour rules are painted as a repeating gradient rather than
+   24 elements per column, so a zoom change is one custom property write. */
+.cal-gutter {
+  width: var(--time-gutter-w);
+}
+
+/* The header does not scroll, so it has to reserve the same gutter the scroll
+   area does or the columns drift out from under their labels. */
+.cal-day-header {
+  height: var(--day-header-h);
+  padding-right: var(--scrollbar-w);
+}
+
+.cal-scroll {
+  scrollbar-gutter: stable;
+}
+
+.cal-body {
+  height: calc(var(--hour-h) * 24);
+}
+
+.cal-column {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--border-hair) 0,
+    var(--border-hair) var(--hairline),
+    transparent var(--hairline),
+    transparent var(--hour-h)
+  );
+}
+
+.now-line {
+  height: var(--hairline);
+  background-color: var(--accent);
+  transform: translateY(-50%);
+}
+
+.now-dot {
+  width: var(--now-dot);
+  height: var(--now-dot);
+  background-color: var(--accent);
+  /* A dot is round by definition, so it sits outside the 4/6/8 radius set. */
+  border-radius: 50%;
+  transform: translateY(-50%);
+}
+
+/* Blocks, SPEC 5.1. A self contained box, never a bar with a coloured edge.
+   The category reads as an icon tint plus a 13% wash, and the hover and
+   selected veils stack over that wash as a second gradient layer so no state
+   has to recompute the tint. */
+.block {
+  --block-veil: transparent;
+  background-color: var(--bg-surface);
+  background-image:
+    linear-gradient(var(--block-veil), var(--block-veil)),
+    linear-gradient(var(--block-tint), var(--block-tint));
+  border: var(--hairline) solid var(--border-hair);
+  border-radius: var(--radius-block);
+  transition:
+    border-color var(--dur-hover) var(--ease-standard),
+    background-color var(--dur-hover) var(--ease-standard),
+    opacity var(--dur-hover) var(--ease-standard);
+}
+
+.block:hover {
+  --block-veil: var(--bg-hover);
+  border-color: var(--border);
+  cursor: pointer;
+}
+
+.block.is-selected {
+  --block-veil: var(--bg-selected);
+  border-color: var(--accent-border);
+}
+
+.block.is-completed {
+  opacity: var(--opacity-completed);
+}
+
+.block.is-completed .block-title {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
+
+.block.is-completed .block-icon {
+  opacity: var(--opacity-completed-icon);
+}
+
+.block.is-dragging {
+  opacity: var(--opacity-dragging);
+  border-color: var(--border-strong);
+}
+
+.block-icon {
+  width: var(--block-icon-slot);
+  color: var(--block-ink);
+}
+
+.block-title {
+  color: var(--text-primary);
+}
+
+.block-meta {
+  color: var(--text-secondary);
+}
+
+.block-meta.is-overdue {
+  color: var(--cat-deadline);
+}
+
+.block-description {
+  color: var(--text-tertiary);
+}
+
+.block-overflow {
+  height: var(--block-overflow-h);
+  background-color: var(--bg-elevated);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-block);
+  color: var(--text-secondary);
+}
+
+.cat-build {
+  --block-tint: var(--cat-build-weak);
+  --block-ink: var(--cat-build);
+}
+
+.cat-content {
+  --block-tint: var(--cat-content-weak);
+  --block-ink: var(--cat-content);
+}
+
+.cat-admin {
+  --block-tint: var(--cat-admin-weak);
+  --block-ink: var(--cat-admin);
+}
+
+.cat-personal {
+  --block-tint: var(--cat-personal-weak);
+  --block-ink: var(--cat-personal);
+}
+
+.cat-deadline {
+  --block-tint: var(--cat-deadline-weak);
+  --block-ink: var(--cat-deadline);
 }
 
 @media (prefers-reduced-motion: reduce) {

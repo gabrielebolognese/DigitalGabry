@@ -98,6 +98,23 @@
   --panel-w-max: 480px;
   --tooltip-gap: 8px;
   --tooltip-delay: 400ms;
+
+  --scrollbar-w: 8px;
+
+  /* Calendar, SPEC 5 */
+  --time-gutter-w: 34px;
+  --day-header-h: 32px;
+  --now-dot: 5px;
+  --block-icon-slot: 20px;
+  --block-inset: 4px;
+  --block-gap: 2px;
+  --block-min-h: 20px;
+  --block-overflow-h: 16px;
+
+  /* State opacities, SPEC 5.1 */
+  --opacity-completed: 0.7;
+  --opacity-completed-icon: 0.5;
+  --opacity-dragging: 0.8;
 }
 
 /* Declared inside @theme because the SPEC token name is already a Tailwind
