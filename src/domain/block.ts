@@ -37,6 +37,8 @@ export type Block = {
   status: BlockStatus;
   category: BlockCategory;
   projectId: string | null;
+  tags: string[];
+  rrule: string | null;
   payload: BlockPayload;
   sortOrder: number;
   createdUtc: number;
@@ -69,3 +71,75 @@ export const DEFAULT_CATEGORY: Record<BlockKind, BlockCategory> = {
   deadline: "deadline",
   note: "personal",
 };
+
+export const BLOCK_KINDS: readonly BlockKind[] = [
+  "task",
+  "post",
+  "event",
+  "focus",
+  "deadline",
+  "note",
+];
+
+export const BLOCK_STATUSES: readonly BlockStatus[] = [
+  "open",
+  "in_progress",
+  "done",
+  "cancelled",
+];
+
+export const BLOCK_CATEGORIES: readonly BlockCategory[] = [
+  "build",
+  "content",
+  "admin",
+  "personal",
+  "deadline",
+];
+
+export const PLATFORMS: readonly Platform[] = [
+  "x",
+  "linkedin",
+  "youtube",
+  "instagram",
+  "tiktok",
+  "github",
+  "blog",
+];
+
+export type NewBlockInput = {
+  id: string;
+  startUtc: number;
+  endUtc: number;
+  tz: string;
+  nowUtc: number;
+  kind?: BlockKind;
+  title?: string;
+};
+
+/* The id is supplied rather than generated here, because domain stays free of
+   the crypto and platform concerns that id generation drags in. */
+export function newBlock(input: NewBlockInput): ScheduledBlock {
+  const kind = input.kind ?? "task";
+
+  return {
+    id: input.id,
+    kind,
+    title: input.title ?? "",
+    description: null,
+    startUtc: input.startUtc,
+    endUtc: input.endUtc,
+    tz: input.tz,
+    allDay: false,
+    status: "open",
+    category: DEFAULT_CATEGORY[kind],
+    projectId: null,
+    tags: [],
+    rrule: null,
+    payload: {},
+    sortOrder: 0,
+    createdUtc: input.nowUtc,
+    updatedUtc: input.nowUtc,
+    completedUtc: null,
+    deletedUtc: null,
+  };
+}

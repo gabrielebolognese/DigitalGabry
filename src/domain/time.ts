@@ -85,6 +85,29 @@ export function minutesWithinDay(
   return localMinutesOfDay(utcMs, tz);
 }
 
+/* Inverse of localMinutesOfDay. Built by setting wall clock fields rather than
+   adding milliseconds to the day start, so a drop onto the 09:00 row lands on
+   09:00 even on the two days a year when the day is 23 or 25 hours long. */
+export function utcFromDayMinutes(
+  dayStartUtc: UtcMillis,
+  minutes: number,
+  tz: string,
+): UtcMillis {
+  const wall = toWall(dayStartUtc, tz);
+  wall.setHours(0, 0, 0, 0);
+  wall.setMinutes(minutes);
+  return fromWall(wall, tz);
+}
+
+export function toDateTimeLocal(utcMs: UtcMillis, tz: string): string {
+  return formatInTimeZone(new Date(utcMs), tz, "yyyy-MM-dd'T'HH:mm");
+}
+
+export function fromDateTimeLocal(value: string, tz: string): UtcMillis | null {
+  const parsed = fromZonedTime(value, tz).getTime();
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 export function isSameLocalDay(a: UtcMillis, b: UtcMillis, tz: string): boolean {
   return startOfLocalDay(a, tz) === startOfLocalDay(b, tz);
 }

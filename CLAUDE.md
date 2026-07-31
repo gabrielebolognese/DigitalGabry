@@ -4,7 +4,7 @@ A local-first desktop calendar and momentum tracker. Tauri v2, React, TypeScript
 
 `SPEC.md` is the contract. `PLAN.md` is the phase sequence. Read both before writing code. If something is not defined in `SPEC.md`, stop and ask rather than inventing it.
 
-**Current phase: 2, week view and block component.** Update this line when a phase merges. One branch per phase named `phase-NN-slug`, one commit, and a cleared context before the next one.
+**Current phase: 4, data layer.** Update this line when a phase merges. One branch per phase named `phase-NN-slug`, one commit, and a cleared context before the next one.
 
 ## Commands
 
@@ -78,7 +78,7 @@ domain/   pure. Imported by everything, imports nothing from the app.
 rg -n '#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(' src --glob '!**/tokens.css'  # must be empty
 rg -n 'box-shadow' src --glob '!**/tokens.css' --glob '!**/global.css'   # must be empty
 rg -n 'font-weight:\s*[67]00|font-(semibold|bold)' src                   # must be empty
-rg -n 'SELECT|INSERT|UPDATE|DELETE' src --glob '!src/db/**'              # must be empty
+rg -ni 'select .*from|insert into|update .*set |delete from' src --glob '!src/db/**'  # must be empty
 rg -n "from 'react'" src/domain                                          # must be empty
 npx tsc --noEmit                                                         # must pass
 npx vitest run                                                           # must pass

@@ -14,6 +14,7 @@ import {
   rangesOverlap,
   snapToGrid,
   startOfLocalDay,
+  utcFromDayMinutes,
   weekRange,
   zoomBy,
 } from "./time";
@@ -129,6 +130,34 @@ describe("rangesOverlap", () => {
   it("detects partial and full containment", () => {
     expect(rangesOverlap({ start: 0, end: 10 }, { start: 5, end: 20 })).toBe(true);
     expect(rangesOverlap({ start: 0, end: 30 }, { start: 5, end: 10 })).toBe(true);
+  });
+});
+
+describe("utcFromDayMinutes", () => {
+  it("round trips through localMinutesOfDay", () => {
+    const day = startOfLocalDay(utc("2026-07-31T12:00:00Z"), DEFAULT_TZ);
+    for (const minutes of [0, 15, 540, 555, 1230, 1425]) {
+      expect(
+        localMinutesOfDay(utcFromDayMinutes(day, minutes, DEFAULT_TZ), DEFAULT_TZ),
+      ).toBe(minutes);
+    }
+  });
+
+  it("lands on the wall clock hour across the spring forward day", () => {
+    // Rome moves 02:00 to 03:00 on 2026-03-29, making the day 23 hours long.
+    const day = startOfLocalDay(utc("2026-03-29T12:00:00Z"), DEFAULT_TZ);
+    const nine = utcFromDayMinutes(day, 9 * 60, DEFAULT_TZ);
+    expect(localMinutesOfDay(nine, DEFAULT_TZ)).toBe(9 * 60);
+    // Adding a plain nine hours of milliseconds would land an hour late.
+    expect(localMinutesOfDay(day + 9 * 60 * 60 * 1000, DEFAULT_TZ)).toBe(10 * 60);
+  });
+
+  it("lands on the wall clock hour across the autumn back day", () => {
+    // Rome repeats 02:00 to 03:00 on 2026-10-25, making the day 25 hours long.
+    const day = startOfLocalDay(utc("2026-10-25T12:00:00Z"), DEFAULT_TZ);
+    expect(
+      localMinutesOfDay(utcFromDayMinutes(day, 9 * 60, DEFAULT_TZ), DEFAULT_TZ),
+    ).toBe(9 * 60);
   });
 });
 

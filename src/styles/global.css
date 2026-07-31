@@ -196,6 +196,10 @@ body,
   scrollbar-gutter: stable;
 }
 
+.inspector {
+  width: var(--inspector-w);
+}
+
 .cal-body {
   height: calc(var(--hour-h) * 24);
 }

@@ -90,6 +90,8 @@ export function createMockBlocks(range: UtcRange, tz: string): Block[] {
       status: done ? "done" : "open",
       category: draft.category,
       projectId: null,
+      tags: [],
+      rrule: null,
       payload: draft.platform === undefined ? {} : { platform: draft.platform },
       sortOrder: index,
       createdUtc: stamp,
