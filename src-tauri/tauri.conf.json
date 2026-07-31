@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "digitalgabry",
+  "productName": "DigitalGabry",
   "version": "0.1.0",
   "identifier": "com.digitalgabry.app",
   "build": {
@@ -12,9 +12,12 @@
   "app": {
     "windows": [
       {
-        "title": "digitalgabry",
-        "width": 800,
-        "height": 600
+        "title": "DigitalGabry",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 700,
+        "backgroundColor": "#0B0B0C"
       }
     ],
     "security": {

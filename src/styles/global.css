@@ -1,0 +1,191 @@
+/*
+  Reset comes from Tailwind's preflight, pulled in by the @import in
+  tokens.css. This file adds the app-level defaults on top of it, plus the
+  handful of chrome rules whose values cannot be expressed as a non-arbitrary
+  Tailwind utility.
+*/
+
+@font-face {
+  font-family: "Geist";
+  src: url("../assets/fonts/Geist-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Geist";
+  src: url("../assets/fonts/Geist-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../assets/fonts/GeistMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../assets/fonts/GeistMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+
+:root {
+  /* Every time, duration, count and score has to sit on the same rhythm. */
+  font-variant-numeric: tabular-nums;
+
+  color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+
+  /* The app font size deliberately sits on body rather than :root. Setting it
+     here would redefine rem and silently rescale every spacing utility. */
+  background-color: var(--bg-app);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-dense);
+  color: var(--text-primary);
+  background-color: var(--bg-app);
+
+  /* The shell owns its own scrolling regions, the window never scrolls. */
+  overflow: hidden;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+::selection {
+  background-color: var(--accent-weak);
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: var(--radius-block);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-strong);
+}
+
+/* Icons, SPEC 3.6. Stroke width and size are enforced here rather than passed
+   as props, so a component cannot introduce a third size or a heavier stroke.
+   CSS wins over the width/height presentation attributes lucide emits. */
+.icon-rail {
+  width: var(--icon-rail);
+  height: var(--icon-rail);
+  stroke-width: var(--icon-stroke);
+}
+
+.icon-content {
+  width: var(--icon-content);
+  height: var(--icon-content);
+  stroke-width: var(--icon-stroke);
+}
+
+/* Motion, SPEC 3.5 */
+.motion-hover {
+  transition:
+    background-color var(--dur-hover) var(--ease-standard),
+    border-color var(--dur-hover) var(--ease-standard),
+    color var(--dur-hover) var(--ease-standard);
+}
+
+.motion-standard {
+  transition:
+    background-color var(--dur-standard) var(--ease-standard),
+    border-color var(--dur-standard) var(--ease-standard),
+    color var(--dur-standard) var(--ease-standard);
+}
+
+/* Fixed layout dimensions from SPEC 4. These sit here rather than in the JSX
+   because expressing them as Tailwind utilities would need arbitrary values. */
+.shell-rail {
+  width: var(--rail-w);
+}
+
+.shell-header {
+  height: var(--header-h);
+}
+
+.shell-avatar {
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+}
+
+.shell-rail-item {
+  width: var(--rail-item-w);
+  height: var(--rail-item-h);
+}
+
+.shell-splitter {
+  width: var(--splitter-hit);
+}
+
+/* The clamp keeps the panel inside its bounds without the drag handler
+   needing to know the limits, so the range lives in exactly one place. */
+.shell-panel {
+  --panel-w: var(--panel-w-default);
+  width: clamp(var(--panel-w-min), var(--panel-w), var(--panel-w-max));
+}
+
+/* Tooltip, SPEC 4: appears after 400ms on hover, disappears immediately.
+   Driven by CSS so the delay stays a token instead of a number in a component. */
+.tooltip-host .tooltip {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--dur-hover) var(--ease-standard) 0s,
+    visibility 0s linear var(--dur-hover);
+}
+
+.tooltip-host:hover .tooltip {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity var(--dur-hover) var(--ease-standard) var(--tooltip-delay),
+    visibility 0s linear var(--tooltip-delay);
+}
+
+.tooltip {
+  margin-left: var(--tooltip-gap);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
