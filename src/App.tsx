@@ -9,6 +9,7 @@ import AppShell from "./components/AppShell";
 import type { ViewId } from "./components/Rail";
 import { DEFAULT_TZ } from "./domain/time";
 import { startReminders } from "./scheduler/reminders";
+import { startNightlyJobs } from "./scheduler/tick";
 
 const CAPTURE_SHORTCUT = "CommandOrControl+Shift+Space";
 
@@ -54,6 +55,7 @@ export default function App() {
   }, []);
 
   useEffect(() => startReminders(DEFAULT_TZ), []);
+  useEffect(() => startNightlyJobs(DEFAULT_TZ), []);
 
   return <AppShell view={view} onViewChange={setView} />;
 }

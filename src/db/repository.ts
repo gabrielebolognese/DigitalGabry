@@ -1093,6 +1093,37 @@ export async function sweepOccurrences(window: UtcRange): Promise<void> {
 }
 
 /* ----------------------------------------------------------------------------
+   Backup and export
+   ------------------------------------------------------------------------- */
+
+/* Deliberately unbounded: an export is a full dump, not a calendar read, so
+   architecture invariant 7 does not apply. */
+export async function listAllBlocks(): Promise<Block[]> {
+  const rows = await query<BlockRow>(
+    `SELECT ${BLOCK_COLUMNS} FROM blocks
+      WHERE deleted_utc IS NULL AND is_exception <> 2
+      ORDER BY start_utc, id`,
+  );
+  return hydrate(rows);
+}
+
+export async function listAllActivity(): Promise<ActivityEntry[]> {
+  return listActivityBetween("0000-00-00", "9999-99-99");
+}
+
+export async function listAllMomentum(): Promise<MomentumDay[]> {
+  return readMomentumDaily("0000-00-00", "9999-99-99");
+}
+
+/* SPEC 11. VACUUM INTO takes an expression, but sqlite rejects a bound
+   parameter here on some builds, so the path is inlined with quotes doubled.
+   It comes from a folder picker, never from imported data. */
+export async function vacuumInto(absolutePath: string): Promise<void> {
+  const escaped = absolutePath.replace(/'/g, "''");
+  await execute(`VACUUM INTO '${escaped}'`);
+}
+
+/* ----------------------------------------------------------------------------
    Recurrence edit scopes
    ------------------------------------------------------------------------- */
 
