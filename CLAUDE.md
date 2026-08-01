@@ -4,7 +4,7 @@ A local-first desktop calendar and momentum tracker. Tauri v2, React, TypeScript
 
 `SPEC.md` is the contract. `PLAN.md` is the phase sequence. Read both before writing code. If something is not defined in `SPEC.md`, stop and ask rather than inventing it.
 
-**Current phase: 8, AI panel.** Update this line when a phase merges. One branch per phase named `phase-NN-slug`, one commit, and a cleared context before the next one.
+**Current phase: 10, polish and audit.** Update this line when a phase merges. One branch per phase named `phase-NN-slug`, one commit, and a cleared context before the next one.
 
 ## Commands
 
