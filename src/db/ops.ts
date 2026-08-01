@@ -36,7 +36,15 @@ function deviceId(): string {
   return created;
 }
 
-const clock = createHlcClock(deviceId());
+/* Built on first use rather than at module load. deviceId reaches for
+   localStorage, and doing that while the module is evaluating makes this file,
+   and everything that imports it, unloadable outside a browser. */
+let clockInstance: ReturnType<typeof createHlcClock> | null = null;
+
+function clock(): ReturnType<typeof createHlcClock> {
+  if (clockInstance === null) clockInstance = createHlcClock(deviceId());
+  return clockInstance;
+}
 
 /* Seeds the clock from the highest stamp already on disk, so a restart cannot
    reissue a stamp that has been used before. */
@@ -45,7 +53,7 @@ export async function primeClock(): Promise<void> {
     "SELECT MAX(hlc) AS hlc FROM ops",
   );
   const highest = rows[0]?.hlc;
-  if (typeof highest === "string" && highest !== "") clock.observe(highest);
+  if (typeof highest === "string" && highest !== "") clock().observe(highest);
 }
 
 function assertIdentifier(value: string): string {
@@ -73,7 +81,7 @@ function opStep(
       change.field,
       change.oldValue,
       change.newValue,
-      clock.next(),
+      clock().next(),
       deviceId(),
       createdUtc,
       batch,
@@ -130,7 +138,7 @@ export async function applyBatch(
       params: [
         ...changed.map((field) => field.newValue),
         now,
-        clock.next(),
+        clock().next(),
         deviceId(),
         change.entityId,
       ],

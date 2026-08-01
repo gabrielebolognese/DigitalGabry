@@ -200,6 +200,10 @@ body,
   width: var(--inspector-w);
 }
 
+.shell-panel-input {
+  height: var(--panel-input-h);
+}
+
 .scrim {
   background-color: var(--scrim);
 }

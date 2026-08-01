@@ -1,5 +1,17 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { emit } from "@tauri-apps/api/event";
 import { DEFAULT_TZ } from "../../domain/time";
+import { open } from "@tauri-apps/plugin-dialog";
+import { maskKey, readApiKey, writeApiKey } from "../../panel/apiKey";
+import {
+  readBackupSettings,
+  runBackup,
+  runExport,
+  runImport,
+  writeBackupSettings,
+  type BackupSettings,
+} from "../../backup/run";
+import { API_KEY_CHANGED } from "../../store/events";
 import type { MomentumConstants } from "../../domain/momentum";
 import { useMomentum } from "../../store/useMomentum";
 import ActivityTypeTable from "./ActivityTypeTable";
@@ -25,6 +37,69 @@ export default function SettingsView({ tz = DEFAULT_TZ }: { tz?: string }) {
   const momentum = useMomentum(tz);
   const [draft, setDraft] = useState<MomentumConstants | null>(null);
 
+  const [keyDraft, setKeyDraft] = useState("");
+  const [keyState, setKeyState] = useState<string | null>(null);
+  const [keyBusy, setKeyBusy] = useState(false);
+
+  const refreshKeyState = useCallback(async () => {
+    const stored = await readApiKey();
+    setKeyState(stored === null ? null : maskKey(stored));
+  }, []);
+
+  useEffect(() => {
+    void refreshKeyState();
+  }, [refreshKeyState]);
+
+  /* The value is written straight to the store and never held in state beyond
+     the keystroke, never logged, and never rendered back. SPEC 9. */
+  const saveKey = useCallback(async () => {
+    setKeyBusy(true);
+    try {
+      await writeApiKey(keyDraft);
+      setKeyDraft("");
+      await refreshKeyState();
+      await emit(API_KEY_CHANGED);
+    } finally {
+      setKeyBusy(false);
+    }
+  }, [keyDraft, refreshKeyState]);
+
+  const [backup, setBackup] = useState<BackupSettings | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupNote, setBackupNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    void readBackupSettings().then(setBackup);
+  }, []);
+
+  const saveBackup = useCallback(async (next: BackupSettings) => {
+    setBackup(next);
+    await writeBackupSettings(next);
+  }, []);
+
+  const pickFolder = useCallback(
+    async (field: "backupDir" | "exportDir") => {
+      if (backup === null) return;
+      const chosen = await open({ directory: true, defaultPath: backup[field] });
+      if (typeof chosen !== "string") return;
+      await saveBackup({ ...backup, [field]: chosen });
+    },
+    [backup, saveBackup],
+  );
+
+  const withBusy = useCallback(async (work: () => Promise<string>) => {
+    setBackupBusy(true);
+    setBackupNote(null);
+    try {
+      setBackupNote(await work());
+      setBackup(await readBackupSettings());
+    } catch (cause) {
+      setBackupNote(cause instanceof Error ? cause.message : "That did not work");
+    } finally {
+      setBackupBusy(false);
+    }
+  }, []);
+
   const values = draft ?? momentum.constants;
 
   return (
@@ -38,6 +113,140 @@ export default function SettingsView({ tz = DEFAULT_TZ }: { tz?: string }) {
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-3">
+        <div className="flex flex-col gap-2">
+          <span className="text-micro uppercase text-tertiary">Anthropic API key</span>
+          <span className="text-meta text-tertiary">
+            {keyState === null
+              ? "No key stored, the assistant panel is disabled"
+              : `Key ${keyState}`}
+          </span>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              className={CELL}
+              value={keyDraft}
+              placeholder={keyState === null ? "sk-ant-..." : "Replace the stored key"}
+              aria-label="Anthropic API key"
+              onChange={(event) => setKeyDraft(event.target.value)}
+            />
+            <button
+              type="button"
+              disabled={keyBusy || keyDraft.trim() === ""}
+              onClick={() => void saveKey()}
+              className="motion-hover shrink-0 rounded-control border border-line px-2 py-1 text-meta text-primary hover:bg-hover"
+            >
+              Save key
+            </button>
+          </div>
+        </div>
+
+        {backup !== null && (
+          <div className="flex flex-col gap-2">
+            <span className="text-micro uppercase text-tertiary">Backups and export</span>
+
+            {(
+              [
+                ["backupDir", "Backup folder", backup.lastBackupUtc],
+                ["exportDir", "Export folder", backup.lastExportUtc],
+              ] as const
+            ).map(([field, label, lastRun]) => (
+              <div key={field} className="flex flex-col gap-1">
+                <span className="text-micro uppercase text-tertiary">{label}</span>
+                <div className="flex items-center gap-2">
+                  <input readOnly className={CELL} value={backup[field]} aria-label={label} />
+                  <button
+                    type="button"
+                    onClick={() => void pickFolder(field)}
+                    className="motion-hover shrink-0 rounded-control border border-line px-2 py-1 text-meta text-primary hover:bg-hover"
+                  >
+                    Choose
+                  </button>
+                </div>
+                <span className="text-micro text-disabled">
+                  {lastRun === null ? "Never run" : `Last run ${new Date(lastRun).toLocaleString()}`}
+                </span>
+              </div>
+            ))}
+
+            <label className="flex flex-col gap-1">
+              <span className="text-micro uppercase text-tertiary">Snapshots kept</span>
+              <input
+                type="number"
+                min={1}
+                className={CELL}
+                value={backup.retention}
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  if (Number.isFinite(next) && next >= 1) {
+                    void saveBackup({ ...backup, retention: Math.floor(next) });
+                  }
+                }}
+              />
+            </label>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={backupBusy}
+                onClick={() =>
+                  void withBusy(async () => {
+                    const report = await runBackup(Date.now(), tz);
+                    return `Snapshot ${report.file}, pruned ${report.pruned.length}`;
+                  })
+                }
+                className="motion-hover rounded-control border border-line px-2 py-1 text-meta text-primary hover:bg-hover"
+              >
+                Back up now
+              </button>
+
+              <button
+                type="button"
+                disabled={backupBusy}
+                onClick={() =>
+                  void withBusy(async () => {
+                    const report = await runExport(Date.now(), tz);
+                    return `Exported ${report.months} months, git ${report.git}`;
+                  })
+                }
+                className="motion-hover rounded-control border border-line px-2 py-1 text-meta text-primary hover:bg-hover"
+              >
+                Export now
+              </button>
+
+              <button
+                type="button"
+                disabled={backupBusy}
+                onClick={() =>
+                  void withBusy(async () => {
+                    const chosen = await open({
+                      multiple: false,
+                      filters: [{ name: "Blocks", extensions: ["md", "csv"] }],
+                    });
+                    if (typeof chosen !== "string") return "Import cancelled";
+                    const report = await runImport(chosen, tz, Date.now());
+                    return report.errors.length === 0
+                      ? `Imported ${report.imported} blocks`
+                      : `Imported ${report.imported} blocks, ${report.errors.length} rows skipped`;
+                  })
+                }
+                className="motion-hover rounded-control border border-line px-2 py-1 text-meta text-secondary hover:bg-hover hover:text-primary"
+              >
+                Import a file
+              </button>
+            </div>
+
+            {backupNote !== null && (
+              <span className="text-meta text-secondary">{backupNote}</span>
+            )}
+            <span className="text-micro text-disabled">
+              Export is one directional, it is never read back as a source of truth
+            </span>
+          </div>
+        )}
+
         <ActivityTypeTable types={momentum.types} onChanged={momentum.rebuild} />
 
         <div className="flex flex-col gap-2">
