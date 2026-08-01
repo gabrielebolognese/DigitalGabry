@@ -81,64 +81,85 @@ function opStep(
   };
 }
 
-/* One ops row per changed field, written in the same transaction as the
+export type EntityChange =
+  | { op: "insert"; entity: Entity; entityId: string; step: Step }
+  | { op: "update"; entity: Entity; entityId: string; changes: readonly FieldChange[] };
+
+/* One batch id, one transaction, spanning as many entities as the caller needs.
+   Splitting a recurring series is a head update plus a tail insert plus an
+   exception repoint; as three separate batches that would take three undos and
+   a crash between them would leave a bounded head with no tail.
+
+   One ops row per changed field, written in the same transaction as the
    mutation itself. Architecture invariant 6. */
+export async function applyBatch(
+  changes: readonly EntityChange[],
+): Promise<string | null> {
+  const batch = uuidv7();
+  const now = Date.now();
+  const steps: Step[] = [];
+
+  for (const change of changes) {
+    if (change.op === "insert") {
+      steps.push(change.step);
+      steps.push(
+        opStep(
+          change.entity,
+          change.entityId,
+          { field: CREATE_FIELD, oldValue: null, newValue: change.entityId },
+          batch,
+          now,
+        ),
+      );
+      continue;
+    }
+
+    const changed = change.changes.filter(
+      (field) => field.oldValue !== field.newValue,
+    );
+    if (changed.length === 0) continue;
+
+    const assignments = changed
+      .map((field) => `${assertIdentifier(field.field)} = ?`)
+      .join(", ");
+
+    steps.push({
+      sql: `UPDATE ${TABLES[change.entity]}
+            SET ${assignments}, updated_utc = ?, hlc = ?, device_id = ?
+            WHERE id = ?`,
+      params: [
+        ...changed.map((field) => field.newValue),
+        now,
+        clock.next(),
+        deviceId(),
+        change.entityId,
+      ],
+    });
+
+    for (const field of changed) {
+      steps.push(opStep(change.entity, change.entityId, field, batch, now));
+    }
+  }
+
+  if (steps.length === 0) return null;
+  await transaction(steps);
+  return batch;
+}
+
 export async function applyUpdate(
   entity: Entity,
   entityId: string,
   changes: readonly FieldChange[],
 ): Promise<string | null> {
-  const changed = changes.filter((change) => change.oldValue !== change.newValue);
-  if (changed.length === 0) return null;
-
-  const table = TABLES[entity];
-  const batch = uuidv7();
-  const now = Date.now();
-
-  const assignments = changed
-    .map((change) => `${assertIdentifier(change.field)} = ?`)
-    .join(", ");
-
-  const steps: Step[] = [
-    {
-      sql: `UPDATE ${table}
-            SET ${assignments}, updated_utc = ?, hlc = ?, device_id = ?
-            WHERE id = ?`,
-      params: [
-        ...changed.map((change) => change.newValue),
-        now,
-        clock.next(),
-        deviceId(),
-        entityId,
-      ],
-    },
-    ...changed.map((change) => opStep(entity, entityId, change, batch, now)),
-  ];
-
-  await transaction(steps);
-  return batch;
+  return applyBatch([{ op: "update", entity, entityId, changes }]);
 }
 
 export async function applyInsert(
   entity: Entity,
   entityId: string,
   insert: Step,
-): Promise<string> {
-  const batch = uuidv7();
-  const now = Date.now();
-
-  await transaction([
-    insert,
-    opStep(
-      entity,
-      entityId,
-      { field: CREATE_FIELD, oldValue: null, newValue: entityId },
-      batch,
-      now,
-    ),
-  ]);
-
-  return batch;
+): Promise<string | null> {
+  return applyBatch([{ op: "insert", entity, entityId, step: insert }]);
 }
 
 type OpRow = {

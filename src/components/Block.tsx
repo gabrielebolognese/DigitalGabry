@@ -5,6 +5,9 @@ import { iconForBlock } from "./blockIcon";
 
 type BlockProps = {
   block: ScheduledBlock;
+  /* Identifies this instance. Differs from block.id for a recurring
+     occurrence, where many entries share one row. */
+  entryId: string;
   tz: string;
   heightPx: number;
   nowUtc: number;
@@ -17,6 +20,7 @@ type BlockProps = {
 
 export default function Block({
   block,
+  entryId,
   tz,
   heightPx,
   nowUtc,
@@ -37,6 +41,7 @@ export default function Block({
   return (
     <div
       data-block-id={block.id}
+      data-entry-id={entryId}
       className={[
         "block",
         `cat-${block.category}`,

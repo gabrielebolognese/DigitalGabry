@@ -9,15 +9,51 @@ import {
   type BlockKind,
   type BlockPayload,
   type BlockStatus,
+  type CalendarEntry,
+  type ExceptionRole,
 } from "../domain/block";
+import {
+  occurrenceId,
+  type ExceptionMarker,
+  type GeneratedOccurrence,
+} from "../domain/recurrence";
 import { uuidv7 } from "../domain/id";
 import type { UtcRange } from "../domain/time";
-import { execute, query, type SqlValue, type Step } from "./client";
+import { execute, query, transaction, type SqlValue, type Step } from "./client";
 import { applyInsert, applyUpdate, type FieldChange } from "./ops";
 
-const BLOCK_COLUMNS = `id, kind, title, description, start_utc, end_utc, tz, all_day,
-  status, category, project_id, rrule, payload, sort_order,
-  created_utc, updated_utc, completed_utc, deleted_utc`;
+const BLOCK_FIELDS = [
+  "id",
+  "kind",
+  "title",
+  "description",
+  "start_utc",
+  "end_utc",
+  "tz",
+  "all_day",
+  "status",
+  "category",
+  "project_id",
+  "rrule",
+  "recurrence_parent_id",
+  "is_exception",
+  "recurrence_original_start_utc",
+  "payload",
+  "sort_order",
+  "created_utc",
+  "updated_utc",
+  "completed_utc",
+  "deleted_utc",
+] as const;
+
+const BLOCK_COLUMNS = BLOCK_FIELDS.join(", ");
+
+/* The occurrence branch of the calendar read projects the parent's fields but
+   the occurrence's own times, so start_utc and end_utc come from o rather
+   than b. */
+const OCCURRENCE_COLUMNS = BLOCK_FIELDS.map((field) =>
+  field === "start_utc" || field === "end_utc" ? `o.${field}` : `b.${field}`,
+).join(", ");
 
 type BlockRow = {
   id: string;
@@ -32,12 +68,27 @@ type BlockRow = {
   category: string;
   project_id: string | null;
   rrule: string | null;
+  recurrence_parent_id: string | null;
+  is_exception: number;
+  recurrence_original_start_utc: number | null;
   payload: string;
   sort_order: number;
   created_utc: number;
   updated_utc: number;
   completed_utc: number | null;
   deleted_utc: number | null;
+};
+
+const EXCEPTION_ROLE_OF: Record<number, ExceptionRole> = {
+  0: "none",
+  1: "override",
+  2: "cancelled",
+};
+
+const EXCEPTION_CODE_OF: Record<ExceptionRole, number> = {
+  none: 0,
+  override: 1,
+  cancelled: 2,
 };
 
 function oneOf<T extends string>(
@@ -75,6 +126,9 @@ function toBlock(row: BlockRow, tags: string[]): Block {
     projectId: row.project_id,
     tags,
     rrule: row.rrule,
+    recurrenceParentId: row.recurrence_parent_id,
+    exceptionRole: EXCEPTION_ROLE_OF[row.is_exception] ?? "none",
+    recurrenceOriginalStartUtc: row.recurrence_original_start_utc,
     payload: parsePayload(row.payload),
     sortOrder: row.sort_order,
     createdUtc: row.created_utc,
@@ -96,6 +150,9 @@ const COLUMN_OF: Partial<Record<keyof Block, string>> = {
   category: "category",
   projectId: "project_id",
   rrule: "rrule",
+  recurrenceParentId: "recurrence_parent_id",
+  exceptionRole: "is_exception",
+  recurrenceOriginalStartUtc: "recurrence_original_start_utc",
   payload: "payload",
   sortOrder: "sort_order",
   completedUtc: "completed_utc",
@@ -107,6 +164,17 @@ function toSql(value: unknown): SqlValue {
   if (typeof value === "boolean") return value ? 1 : 0;
   if (typeof value === "number" || typeof value === "string") return value;
   return JSON.stringify(value);
+}
+
+/* exceptionRole is a string union in the domain and an integer in the column,
+   so it cannot go through the generic encoder. */
+function encodeField(field: keyof Block, value: unknown): SqlValue {
+  if (field === "exceptionRole") {
+    return typeof value === "string" && value in EXCEPTION_CODE_OF
+      ? EXCEPTION_CODE_OF[value as ExceptionRole]
+      : 0;
+  }
+  return toSql(value);
 }
 
 async function tagsFor(blockIds: readonly string[]): Promise<Map<string, string[]>> {
@@ -136,8 +204,15 @@ async function hydrate(rows: BlockRow[]): Promise<Block[]> {
   return rows.map((row) => toBlock(row, tags.get(row.id) ?? []));
 }
 
-/* Every calendar read is range bounded. Architecture invariant 7. */
-export async function listBlocksInRange(range: UtcRange): Promise<Block[]> {
+/* Every calendar read is range bounded. Architecture invariant 7.
+ *
+ * Two bounded reads rather than one: plain blocks, and materialised
+ * occurrences joined to the series that owns them.
+ *
+ * `rrule IS NULL` on the first is load bearing. A series seed has both its own
+ * start_utc and its own occurrence row, so without it every recurring block
+ * renders twice at its first instant. */
+export async function listBlocksInRange(range: UtcRange): Promise<CalendarEntry[]> {
   if (import.meta.env.DEV) {
     console.debug(
       "[db] blocks in range",
@@ -147,9 +222,11 @@ export async function listBlocksInRange(range: UtcRange): Promise<Block[]> {
     );
   }
 
-  const rows = await query<BlockRow>(
+  const plain = await query<BlockRow>(
     `SELECT ${BLOCK_COLUMNS} FROM blocks
       WHERE deleted_utc IS NULL
+        AND rrule IS NULL
+        AND is_exception <> 2
         AND start_utc IS NOT NULL
         AND start_utc < ?
         AND end_utc > ?
@@ -157,7 +234,35 @@ export async function listBlocksInRange(range: UtcRange): Promise<Block[]> {
     [range.end, range.start],
   );
 
-  return hydrate(rows);
+  const occurrences = await query<BlockRow & { occurrence_id: string }>(
+    `SELECT ${OCCURRENCE_COLUMNS}, o.id AS occurrence_id
+       FROM occurrences o
+       JOIN blocks b ON b.id = o.block_id
+      WHERE b.deleted_utc IS NULL
+        AND o.start_utc < ?
+        AND o.end_utc > ?
+      ORDER BY o.start_utc`,
+    [range.end, range.start],
+  );
+
+  const tags = await tagsFor([
+    ...plain.map((row) => row.id),
+    ...occurrences.map((row) => row.id),
+  ]);
+
+  const standalone: CalendarEntry[] = plain.map((row) => ({
+    ...toBlock(row, tags.get(row.id) ?? []),
+    entryId: row.id,
+    occurrenceStartUtc: null,
+  }));
+
+  const generated: CalendarEntry[] = occurrences.map((row) => ({
+    ...toBlock(row, tags.get(row.id) ?? []),
+    entryId: row.occurrence_id,
+    occurrenceStartUtc: row.start_utc,
+  }));
+
+  return [...standalone, ...generated];
 }
 
 export async function getBlock(id: string): Promise<Block | null> {
@@ -184,9 +289,10 @@ function insertStep(block: Block): Step {
   return {
     sql: `INSERT INTO blocks
             (id, kind, title, description, start_utc, end_utc, tz, all_day, status,
-             category, project_id, rrule, payload, sort_order,
+             category, project_id, rrule, recurrence_parent_id, is_exception,
+             recurrence_original_start_utc, payload, sort_order,
              created_utc, updated_utc, completed_utc, deleted_utc, hlc, device_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     params: [
       block.id,
       block.kind,
@@ -200,6 +306,9 @@ function insertStep(block: Block): Step {
       block.category,
       block.projectId,
       block.rrule,
+      block.recurrenceParentId,
+      EXCEPTION_CODE_OF[block.exceptionRole],
+      block.recurrenceOriginalStartUtc,
       JSON.stringify(block.payload),
       block.sortOrder,
       block.createdUtc,
@@ -211,6 +320,8 @@ function insertStep(block: Block): Step {
     ],
   };
 }
+
+export { insertStep as blockInsertStep };
 
 export async function insertBlock(block: Block): Promise<void> {
   await applyInsert("block", block.id, insertStep(block));
@@ -231,8 +342,8 @@ export async function updateBlock(
     if (!(field in patch)) continue;
     changes.push({
       field: column,
-      oldValue: toSql(current[field]),
-      newValue: toSql(patch[field]),
+      oldValue: encodeField(field, current[field]),
+      newValue: encodeField(field, patch[field]),
     });
   }
 
@@ -301,6 +412,7 @@ export async function searchBlocks(term: string, limit = 50): Promise<Block[]> {
        JOIN blocks b ON b.rowid = f.rowid
       WHERE blocks_fts MATCH ?
         AND b.deleted_utc IS NULL
+        AND b.is_exception <> 2
       ORDER BY rank
       LIMIT ?`,
     [term, limit],
@@ -487,5 +599,176 @@ export async function insertActivity(entry: {
 export async function softDeleteActivity(id: string): Promise<void> {
   await applyUpdate("activity_log", id, [
     { field: "deleted_utc", oldValue: null, newValue: Date.now() },
+  ]);
+}
+
+/* ----------------------------------------------------------------------------
+   Recurrence
+   ------------------------------------------------------------------------- */
+
+export type RecurringSeed = {
+  id: string;
+  startUtc: number;
+  endUtc: number;
+  tz: string;
+  rrule: string;
+};
+
+export async function listRecurringSeeds(): Promise<RecurringSeed[]> {
+  const rows = await query<{
+    id: string;
+    start_utc: number;
+    end_utc: number;
+    tz: string;
+    rrule: string;
+  }>(
+    `SELECT id, start_utc, end_utc, tz, rrule FROM blocks
+      WHERE deleted_utc IS NULL AND rrule IS NOT NULL AND rrule <> ''
+        AND start_utc IS NOT NULL AND end_utc IS NOT NULL`,
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    startUtc: row.start_utc,
+    endUtc: row.end_utc,
+    tz: row.tz,
+    rrule: row.rrule,
+  }));
+}
+
+export async function listExceptionsFor(
+  seriesId: string,
+): Promise<ExceptionMarker[]> {
+  const rows = await query<{ recurrence_original_start_utc: number; is_exception: number }>(
+    `SELECT recurrence_original_start_utc, is_exception FROM blocks
+      WHERE recurrence_parent_id = ? AND deleted_utc IS NULL AND is_exception <> 0
+        AND recurrence_original_start_utc IS NOT NULL`,
+    [seriesId],
+  );
+  return rows.map((row) => ({
+    originalStartUtc: row.recurrence_original_start_utc,
+    kind: row.is_exception === 2 ? "cancelled" : "override",
+  }));
+}
+
+export type RecurrenceStateRow = {
+  blockId: string;
+  windowStartUtc: number;
+  windowEndUtc: number;
+  fingerprint: string;
+};
+
+export async function listRecurrenceState(): Promise<RecurrenceStateRow[]> {
+  const rows = await query<{
+    block_id: string;
+    window_start_utc: number;
+    window_end_utc: number;
+    fingerprint: string;
+  }>(`SELECT block_id, window_start_utc, window_end_utc, fingerprint FROM recurrence_state`);
+  return rows.map((row) => ({
+    blockId: row.block_id,
+    windowStartUtc: row.window_start_utc,
+    windowEndUtc: row.window_end_utc,
+    fingerprint: row.fingerprint,
+  }));
+}
+
+/* Rows per statement, kept well under the legacy 999 parameter ceiling at five
+   parameters each rather than the modern 32766. */
+export const OCCURRENCE_CHUNK_ROWS = 150;
+
+export type OccurrenceBatch = {
+  blockId: string;
+  occurrences: readonly GeneratedOccurrence[];
+  windowStartUtc: number;
+  windowEndUtc: number;
+  fingerprint: string;
+  truncated: boolean;
+};
+
+/* Pure, so the positional parameter flattening that `transaction` performs can
+   be tested without a database. A statement or parameter ordering mistake here
+   writes wrong times with no error at all. */
+export function occurrenceWriteSteps(
+  batches: readonly OccurrenceBatch[],
+  generatedUtc: number,
+): Step[] {
+  const steps: Step[] = [];
+
+  for (const batch of batches) {
+    // A hard delete, which does not violate invariant 5: `occurrences` is a
+    // derived cache, which is why its schema carries no deleted_utc column.
+    steps.push({
+      sql: "DELETE FROM occurrences WHERE block_id = ?",
+      params: [batch.blockId],
+    });
+
+    for (let index = 0; index < batch.occurrences.length; index += OCCURRENCE_CHUNK_ROWS) {
+      const chunk = batch.occurrences.slice(index, index + OCCURRENCE_CHUNK_ROWS);
+      const params: SqlValue[] = [];
+      for (const entry of chunk) {
+        params.push(
+          occurrenceId(entry.blockId, entry.startUtc),
+          entry.blockId,
+          entry.startUtc,
+          entry.endUtc,
+          generatedUtc,
+        );
+      }
+      steps.push({
+        sql:
+          `INSERT OR REPLACE INTO occurrences (id, block_id, start_utc, end_utc, generated_utc) VALUES ` +
+          chunk.map(() => "(?, ?, ?, ?, ?)").join(", "),
+        params,
+      });
+    }
+
+    steps.push({
+      sql: `INSERT OR REPLACE INTO recurrence_state
+              (block_id, window_start_utc, window_end_utc, fingerprint,
+               occurrence_count, truncated, generated_utc)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      params: [
+        batch.blockId,
+        batch.windowStartUtc,
+        batch.windowEndUtc,
+        batch.fingerprint,
+        batch.occurrences.length,
+        batch.truncated ? 1 : 0,
+        generatedUtc,
+      ],
+    });
+  }
+
+  return steps;
+}
+
+export async function writeOccurrences(
+  batches: readonly OccurrenceBatch[],
+  generatedUtc: number,
+): Promise<void> {
+  const steps = occurrenceWriteSteps(batches, generatedUtc);
+  if (steps.length > 0) await transaction(steps);
+}
+
+export async function deleteOccurrenceAt(
+  seriesId: string,
+  startUtc: number,
+): Promise<void> {
+  await execute("DELETE FROM occurrences WHERE block_id = ? AND start_utc = ?", [
+    seriesId,
+    startUtc,
+  ]);
+}
+
+/* `occurrences` has no cascade and no tombstone, so rows for blocks that have
+   been deleted, un-recurred, or left the window would otherwise accumulate. */
+export async function sweepOccurrences(window: UtcRange): Promise<void> {
+  await execute(
+    `DELETE FROM occurrences WHERE block_id NOT IN
+       (SELECT id FROM blocks WHERE deleted_utc IS NULL AND rrule IS NOT NULL AND rrule <> '')`,
+  );
+  await execute("DELETE FROM occurrences WHERE start_utc >= ? OR end_utc <= ?", [
+    window.end,
+    window.start,
   ]);
 }

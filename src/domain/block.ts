@@ -23,7 +23,18 @@ export type BlockPayload = {
   url?: string;
   assetPath?: string;
   publishState?: string;
+  /* SPEC 6.1 describes payload as holding "kind specific fields such as ...",
+     so it is extensible by design. These four are added in phase 6. */
+  priority?: "low" | "normal" | "high";
+  reminderMinutes?: number;
+  splitFromId?: string;
+  splitAtUtc?: number;
 };
+
+/* 0 none, 1 override, 2 cancellation on the is_exception column. A cancelled
+   occurrence is a row rather than a deletion, which is what lets undo restore
+   it by tombstoning the marker. */
+export type ExceptionRole = "none" | "override" | "cancelled";
 
 export type Block = {
   id: string;
@@ -39,6 +50,9 @@ export type Block = {
   projectId: string | null;
   tags: string[];
   rrule: string | null;
+  recurrenceParentId: string | null;
+  exceptionRole: ExceptionRole;
+  recurrenceOriginalStartUtc: number | null;
   payload: BlockPayload;
   sortOrder: number;
   createdUtc: number;
@@ -49,9 +63,26 @@ export type Block = {
 
 export type ScheduledBlock = Block & { startUtc: number; endUtc: number };
 
+/* What the calendar actually renders. Every instance of a series shares its
+   parent's id, so the id cannot double as the entry identity: a cache keyed by
+   it would collapse a daily rule into a single entry, and a React key built
+   from it would repeat. entryId identifies the instance, id still points at the
+   row a mutation has to touch. */
+export type CalendarEntry = Block & {
+  readonly entryId: string;
+  readonly occurrenceStartUtc: number | null;
+};
+
+export function isRecurringSeed(block: Block): boolean {
+  return block.rrule !== null && block.rrule !== "";
+}
+
 /* A block with no start time is unscheduled and belongs to the backlog, so the
-   calendar has to narrow before it can position anything. */
-export function isScheduled(block: Block): block is ScheduledBlock {
+   calendar has to narrow before it can position anything. Generic, so
+   narrowing a CalendarEntry does not throw away its entryId. */
+export function isScheduled<T extends Block>(
+  block: T,
+): block is T & { startUtc: number; endUtc: number } {
   return block.startUtc !== null && block.endUtc !== null;
 }
 
@@ -135,6 +166,9 @@ export function newBlock(input: NewBlockInput): ScheduledBlock {
     projectId: null,
     tags: [],
     rrule: null,
+    recurrenceParentId: null,
+    exceptionRole: "none",
+    recurrenceOriginalStartUtc: null,
     payload: {},
     sortOrder: 0,
     createdUtc: input.nowUtc,

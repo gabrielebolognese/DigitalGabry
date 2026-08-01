@@ -1,18 +1,21 @@
 import { useSyncExternalStore } from "react";
 
+/* Selection is by entry, not by block. A recurring series shows many entries
+   that all share one block id, and selecting "the block" would light up every
+   instance of it and give the edit scope prompt no instant to act on. */
 export type UiState = {
-  selectedBlockId: string | null;
+  selectedEntryId: string | null;
   inspectorOpen: boolean;
-  editingTitleBlockId: string | null;
+  editingTitleEntryId: string | null;
 };
 
 /* A module level store rather than context, so selection can be read from the
    calendar and the inspector without threading a provider through the shell.
    SPEC section 2 fixes the stack, and a state library is not in it. */
 let state: UiState = {
-  selectedBlockId: null,
+  selectedEntryId: null,
   inspectorOpen: false,
-  editingTitleBlockId: null,
+  editingTitleEntryId: null,
 };
 
 const listeners = new Set<() => void>();
@@ -38,23 +41,27 @@ export function useUiStore(): UiState {
 }
 
 export const ui = {
-  selectBlock(id: string): void {
-    commit({ selectedBlockId: id, inspectorOpen: true, editingTitleBlockId: null });
+  selectEntry(entryId: string): void {
+    commit({ selectedEntryId: entryId, inspectorOpen: true, editingTitleEntryId: null });
   },
 
   clearSelection(): void {
-    commit({ selectedBlockId: null, inspectorOpen: false, editingTitleBlockId: null });
+    commit({ selectedEntryId: null, inspectorOpen: false, editingTitleEntryId: null });
   },
 
   closeInspector(): void {
-    commit({ ...state, inspectorOpen: false, editingTitleBlockId: null });
+    commit({ ...state, inspectorOpen: false, editingTitleEntryId: null });
   },
 
-  startTitleEdit(id: string): void {
-    commit({ selectedBlockId: id, inspectorOpen: state.inspectorOpen, editingTitleBlockId: id });
+  startTitleEdit(entryId: string): void {
+    commit({
+      selectedEntryId: entryId,
+      inspectorOpen: state.inspectorOpen,
+      editingTitleEntryId: entryId,
+    });
   },
 
   stopTitleEdit(): void {
-    commit({ ...state, editingTitleBlockId: null });
+    commit({ ...state, editingTitleEntryId: null });
   },
 };
