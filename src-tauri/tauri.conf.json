@@ -12,11 +12,26 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "DigitalGabry",
         "width": 1440,
         "height": 900,
         "minWidth": 1100,
         "minHeight": 700,
+        "backgroundColor": "#0B0B0C"
+      },
+      {
+        "label": "capture",
+        "title": "Quick capture",
+        "url": "index.html?window=capture",
+        "width": 480,
+        "height": 120,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": true,
+        "visible": false,
         "backgroundColor": "#0B0B0C"
       }
     ],

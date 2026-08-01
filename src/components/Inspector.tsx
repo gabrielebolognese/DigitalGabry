@@ -20,6 +20,11 @@ type InspectorProps = {
   block: Block;
   tz: string;
   autoFocusTitle?: boolean;
+  /* True when this is one instance of a series. Field edits here address the
+     row, which every instance shares, so they reach the whole series. Drag and
+     delete ask for a scope instead; typing into a field cannot, because the
+     prompt would reopen on every keystroke. */
+  partOfSeries?: boolean;
   onChange: (patch: Partial<Block>) => void;
   onClose: () => void;
 };
@@ -37,6 +42,7 @@ export default function Inspector({
   block,
   tz,
   autoFocusTitle = false,
+  partOfSeries = false,
   onChange,
   onClose,
 }: InspectorProps) {
@@ -102,6 +108,12 @@ export default function Inspector({
       </header>
 
       <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-3">
+        {partOfSeries && (
+          <span className="text-micro text-cat-deadline">
+            Edits here apply to every occurrence in this series
+          </span>
+        )}
+
         <Field label="Title">
           <input
             ref={titleRef}

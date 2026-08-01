@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Block } from "../domain/block";
+import type { Block, CalendarEntry } from "../domain/block";
 import type { UtcRange } from "../domain/time";
+import { listen } from "@tauri-apps/api/event";
 import { primeClock } from "../db/ops";
+import { ensureMaterialized } from "../scheduler/materialize";
+import { BLOCKS_CHANGED } from "./events";
 import {
   insertBlock,
   listBlocksInRange,
@@ -11,13 +14,16 @@ import {
 } from "../db/repository";
 
 export type BlocksApi = {
-  blocks: Block[];
+  blocks: CalendarEntry[];
   loading: boolean;
   error: Error | null;
   createBlock: (block: Block) => void;
   updateBlock: (id: string, patch: Partial<Block>) => void;
   softDeleteBlock: (id: string) => void;
   restoreBlock: (id: string) => void;
+  /* Forces a re-read. Used after an operation that writes rows this hook did
+     not issue itself, such as a recurrence edit scope. */
+  refresh: () => void;
 };
 
 /* One screen of buffer either side of the viewport is fetched, and anything
@@ -26,27 +32,49 @@ export type BlocksApi = {
 const BUFFER_SCREENS = 1;
 const KEEP_SCREENS = 3;
 
-type Cache = Map<string, Block>;
+/* Keyed by entryId, not by block id. Every instance of a recurring series
+   shares its parent's id, so a cache keyed by id would collapse a daily rule
+   into a single entry and quietly show one instance. */
+type Cache = Map<string, CalendarEntry>;
 
-function merge(previous: Cache, fetched: readonly Block[]): Cache {
+function merge(previous: Cache, fetched: readonly CalendarEntry[]): Cache {
   const next = new Map(previous);
-  for (const block of fetched) next.set(block.id, block);
+  for (const entry of fetched) next.set(entry.entryId, entry);
   return next;
 }
 
 function evict(cache: Cache, keep: UtcRange): Cache {
   const next = new Map(cache);
-  for (const [id, block] of next) {
-    if (block.startUtc === null || block.endUtc === null) continue;
-    if (block.endUtc < keep.start || block.startUtc > keep.end) next.delete(id);
+  for (const [entryId, entry] of next) {
+    if (entry.startUtc === null || entry.endUtc === null) continue;
+    if (entry.endUtc < keep.start || entry.startUtc > keep.end) next.delete(entryId);
   }
   return next;
 }
 
-export function useBlocks(range: UtcRange, _tz: string): BlocksApi {
+function asEntry(block: Block): CalendarEntry {
+  return { ...block, entryId: block.id, occurrenceStartUtc: null };
+}
+
+export function useBlocks(range: UtcRange, tz: string): BlocksApi {
   const [cache, setCache] = useState<Cache>(() => new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [refreshToken, setRefreshToken] = useState(0);
+
+  /* The capture window writes to the same database this window reads, so a
+     captured block would not appear until the week changed without this. */
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void listen(BLOCKS_CHANGED, () => setRefreshToken((token) => token + 1)).then(
+      (stop) => {
+        unlisten = stop;
+      },
+    );
+    return () => {
+      if (unlisten !== null) unlisten();
+    };
+  }, []);
 
   const cacheRef = useRef<Cache>(cache);
   cacheRef.current = cache;
@@ -61,6 +89,9 @@ export function useBlocks(range: UtcRange, _tz: string): BlocksApi {
     void (async () => {
       try {
         await primeClock();
+        // Occurrences are read from the table, never expanded at query time,
+        // so they have to exist before the first read.
+        await ensureMaterialized(Date.now(), tz);
         const fetched = await listBlocksInRange({
           start: start - span * BUFFER_SCREENS,
           end: end + span * BUFFER_SCREENS,
@@ -84,7 +115,7 @@ export function useBlocks(range: UtcRange, _tz: string): BlocksApi {
     return () => {
       cancelled = true;
     };
-  }, [start, end, span]);
+  }, [start, end, span, tz, refreshToken]);
 
   // Adjacent weeks are fetched only when the main thread has nothing better to
   // do, so a fast scroll never waits on a prefetch.
@@ -107,7 +138,7 @@ export function useBlocks(range: UtcRange, _tz: string): BlocksApi {
       })();
     });
     return () => window.cancelIdleCallback(handle);
-  }, [start, end, span]);
+  }, [start, end, span, tz, refreshToken]);
 
   /* Mutations land in local state immediately and reconcile against the write.
      A rejected write puts the previous snapshot back and reports the failure
@@ -128,10 +159,22 @@ export function useBlocks(range: UtcRange, _tz: string): BlocksApi {
     [],
   );
 
+  /* Mutations address the row by block id, so every entry sharing that id is
+     updated, which is what makes an optimistic edit to a series show on all of
+     its visible instances at once. */
+  const patchById = useCallback(
+    (cache: Cache, id: string, patch: Partial<CalendarEntry>) => {
+      for (const [entryId, entry] of cache) {
+        if (entry.id === id) cache.set(entryId, { ...entry, ...patch });
+      }
+    },
+    [],
+  );
+
   const createBlock = useCallback(
     (block: Block) => {
       optimistic(
-        (next) => next.set(block.id, block),
+        (next) => next.set(block.id, asEntry(block)),
         () => insertBlock(block),
       );
     },
@@ -140,40 +183,49 @@ export function useBlocks(range: UtcRange, _tz: string): BlocksApi {
 
   const updateBlock = useCallback(
     (id: string, patch: Partial<Block>) => {
-      optimistic((next) => {
-        const current = next.get(id);
-        if (current !== undefined) {
-          next.set(id, { ...current, ...patch, updatedUtc: Date.now() });
-        }
-      }, () => updateInDb(id, patch));
+      optimistic(
+        (next) => patchById(next, id, { ...patch, updatedUtc: Date.now() }),
+        () => updateInDb(id, patch),
+      );
     },
-    [optimistic],
+    [optimistic, patchById],
   );
 
   const softDeleteBlock = useCallback(
     (id: string) => {
-      optimistic((next) => {
-        const current = next.get(id);
-        if (current !== undefined) next.set(id, { ...current, deletedUtc: Date.now() });
-      }, () => softDeleteInDb(id));
+      optimistic(
+        (next) => patchById(next, id, { deletedUtc: Date.now() }),
+        () => softDeleteInDb(id),
+      );
     },
-    [optimistic],
+    [optimistic, patchById],
   );
 
   const restoreBlock = useCallback(
     (id: string) => {
-      optimistic((next) => {
-        const current = next.get(id);
-        if (current !== undefined) next.set(id, { ...current, deletedUtc: null });
-      }, () => restoreInDb(id));
+      optimistic(
+        (next) => patchById(next, id, { deletedUtc: null }),
+        () => restoreInDb(id),
+      );
     },
-    [optimistic],
+    [optimistic, patchById],
   );
 
   const blocks = useMemo(
-    () => [...cache.values()].filter((block) => block.deletedUtc === null),
+    () => [...cache.values()].filter((entry) => entry.deletedUtc === null),
     [cache],
   );
 
-  return { blocks, loading, error, createBlock, updateBlock, softDeleteBlock, restoreBlock };
+  const refresh = useCallback(() => setRefreshToken((token) => token + 1), []);
+
+  return {
+    blocks,
+    loading,
+    error,
+    createBlock,
+    updateBlock,
+    softDeleteBlock,
+    restoreBlock,
+    refresh,
+  };
 }

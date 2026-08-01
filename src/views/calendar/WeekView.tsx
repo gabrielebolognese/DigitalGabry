@@ -13,11 +13,22 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import BlockBox from "../../components/Block";
 import Inspector from "../../components/Inspector";
 import Toast from "../../components/Toast";
+import RecurrenceScopePrompt from "../../components/RecurrenceScopePrompt";
+import {
+  cancelOccurrence,
+  editFuture,
+  editOccurrence,
+  editSeries,
+  softDeleteBlock as softDeleteRepositoryBlock,
+  truncateSeriesAt,
+} from "../../db/repository";
+import { materializeAll } from "../../scheduler/materialize";
+import type { EditScope, OccurrenceRef } from "../../domain/recurrence";
 import {
   isScheduled,
   newBlock,
   type Block,
-  type ScheduledBlock,
+  type CalendarEntry,
 } from "../../domain/block";
 import { uuidv7 } from "../../domain/id";
 import {
@@ -68,7 +79,9 @@ const DRAG_THRESHOLD_PX = 3;
    are almost never used. SPEC does not state a landing hour. */
 const INITIAL_SCROLL_HOUR = 7;
 
-type DayBlock = Span & { block: ScheduledBlock };
+type ScheduledEntry = CalendarEntry & { startUtc: number; endUtc: number };
+
+type DayBlock = Span & { block: ScheduledEntry };
 
 type Slot = { dayIndex: number; minutes: number };
 
@@ -79,6 +92,7 @@ type DragMode = "move" | "resize-start" | "resize-end" | "create";
 type Drag = {
   mode: DragMode;
   blockId: string | null;
+  entryId: string | null;
   originX: number;
   originY: number;
   anchorDay: number;
@@ -167,9 +181,9 @@ type DayColumnProps = {
   nowUtc: number;
   hourHeight: HourHeight;
   isToday: boolean;
-  selectedBlockId: string | null;
-  editingBlockId: string | null;
-  draggingBlockId: string | null;
+  selectedEntryId: string | null;
+  editingEntryId: string | null;
+  draggingEntryId: string | null;
   ghost: Preview | null;
   onTitleCommit: (id: string, title: string) => void;
   onTitleCancel: () => void;
@@ -181,9 +195,9 @@ function DayColumn({
   nowUtc,
   hourHeight,
   isToday,
-  selectedBlockId,
-  editingBlockId,
-  draggingBlockId,
+  selectedEntryId,
+  editingEntryId,
+  draggingEntryId,
   ghost,
   onTitleCommit,
   onTitleCancel,
@@ -192,18 +206,19 @@ function DayColumn({
     <div className="cal-column cal-body relative min-w-0 flex-1 border-l border-hair">
       {layout.placed.map(({ item, placement }) => (
         <div
-          key={item.block.id}
+          key={item.block.entryId}
           className="absolute"
           style={blockGeometry(item, placement)}
         >
           <BlockBox
             block={item.block}
+            entryId={item.block.entryId}
             tz={tz}
             nowUtc={nowUtc}
             heightPx={minutesToPixels(item.endMin - item.startMin, hourHeight)}
-            selected={item.block.id === selectedBlockId}
-            dragging={item.block.id === draggingBlockId}
-            editing={item.block.id === editingBlockId}
+            selected={item.block.entryId === selectedEntryId}
+            dragging={item.block.entryId === draggingEntryId}
+            editing={item.block.entryId === editingEntryId}
             onTitleCommit={(title) => onTitleCommit(item.block.id, title)}
             onTitleCancel={onTitleCancel}
           />
@@ -253,7 +268,7 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
   const zoomAnchor = useRef<{ minutes: number; offsetY: number } | null>(null);
   const landed = useRef(false);
 
-  const { selectedBlockId, inspectorOpen, editingTitleBlockId } = useUiStore();
+  const { selectedEntryId, inspectorOpen, editingTitleEntryId } = useUiStore();
 
   useEffect(() => {
     const id = window.setInterval(() => setNowUtc(Date.now()), NOW_TICK_MS);
@@ -263,8 +278,57 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
   const range = useMemo(() => weekRange(anchorUtc, tz), [anchorUtc, tz]);
   const days = useMemo(() => daysOfWeek(anchorUtc, tz), [anchorUtc, tz]);
 
-  const { blocks, loading, error, createBlock, updateBlock, softDeleteBlock, restoreBlock } =
-    useBlocks(range, tz);
+  const {
+    blocks,
+    loading,
+    error,
+    createBlock,
+    updateBlock,
+    softDeleteBlock,
+    restoreBlock,
+    refresh,
+  } = useBlocks(range, tz);
+
+  /* A pending action on a repeating block. SPEC defines only the exception
+     mechanism, so the scope is asked for before anything is written. */
+  const [pendingScope, setPendingScope] = useState<{
+    action: "edit" | "delete";
+    ref: OccurrenceRef;
+    patch: Partial<Block>;
+  } | null>(null);
+
+  const runScope = useCallback(
+    async (scope: EditScope) => {
+      const pending = pendingScope;
+      if (pending === null) return;
+      setPendingScope(null);
+
+      try {
+        if (pending.action === "delete") {
+          if (scope === "occurrence") await cancelOccurrence(pending.ref);
+          else if (scope === "future") await truncateSeriesAt(pending.ref);
+          else await softDeleteRepositoryBlock(pending.ref.seriesId);
+        } else if (scope === "occurrence") {
+          await editOccurrence(pending.ref, pending.patch);
+        } else if (scope === "future") {
+          await editFuture(pending.ref, pending.patch);
+        } else {
+          await editSeries(pending.ref.seriesId, pending.patch);
+        }
+
+        // The rule or its anchors may have moved, so the cache has to be
+        // rebuilt before the next read.
+        await materializeAll(Date.now(), tz, { force: true });
+        refresh();
+      } catch (cause) {
+        setToast({
+          message: cause instanceof Error ? cause.message : "Could not change the series",
+          undoBlockId: null,
+        });
+      }
+    },
+    [pendingScope, tz, refresh],
+  );
 
   // A write that the database rejected has already been rolled back in the
   // store; the user still needs to be told the change did not stick.
@@ -273,21 +337,21 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
     setToast({ message: "Could not save, the change was rolled back", undoBlockId: null });
   }, [error]);
 
-  const selectedBlock: Block | null = useMemo(
-    () => blocks.find((block) => block.id === selectedBlockId) ?? null,
-    [blocks, selectedBlockId],
+  const selectedEntry: CalendarEntry | null = useMemo(
+    () => blocks.find((entry) => entry.entryId === selectedEntryId) ?? null,
+    [blocks, selectedEntryId],
   );
 
   // While a move or resize is in flight the dragged block is laid out from the
   // preview, so it lands in the right column even when the pointer crosses days.
   const effectiveBlocks = useMemo(() => {
     const preview = drag?.preview;
-    if (drag === null || preview === undefined || preview === null || drag.blockId === null) {
+    if (drag === null || preview === undefined || preview === null || drag.entryId === null) {
       return blocks;
     }
     const dayStart = days[preview.dayIndex];
     return blocks.map((block) =>
-      block.id === drag.blockId
+      block.entryId === drag.entryId
         ? {
             ...block,
             startUtc: utcFromDayMinutes(dayStart, preview.startMin, tz),
@@ -361,8 +425,18 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
 
     if (blockElement instanceof HTMLElement) {
       const blockId = blockElement.dataset.blockId;
-      const block = blocks.find((candidate) => candidate.id === blockId);
-      if (blockId === undefined || block === undefined || !isScheduled(block)) return;
+      const entryId = blockElement.dataset.entryId;
+      // Located by entry, because a recurring instance shares its row's id
+      // with every other instance of the same series.
+      const block = blocks.find((candidate) => candidate.entryId === entryId);
+      if (
+        blockId === undefined ||
+        entryId === undefined ||
+        block === undefined ||
+        !isScheduled(block)
+      ) {
+        return;
+      }
 
       const dayIndex = days.indexOf(startOfLocalDay(block.startUtc, tz));
       const startMin = localMinutesOfDay(block.startUtc, tz);
@@ -375,6 +449,7 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
         ...base,
         mode: edge === "start" ? "resize-start" : edge === "end" ? "resize-end" : "move",
         blockId,
+        entryId,
         anchorDay: dayIndex < 0 ? slot.dayIndex : dayIndex,
         anchorMin: startMin,
         grabOffsetMin: snapToGrid(slot.minutes) - startMin,
@@ -388,6 +463,7 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
       ...base,
       mode: "create",
       blockId: null,
+      entryId: null,
       anchorDay: slot.dayIndex,
       anchorMin: snapToGrid(slot.minutes),
       grabOffsetMin: 0,
@@ -429,7 +505,7 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
     setDrag(null);
 
     if (!finished.moved) {
-      if (finished.blockId !== null) ui.selectBlock(finished.blockId);
+      if (finished.entryId !== null) ui.selectEntry(finished.entryId);
       else ui.clearSelection();
       return;
     }
@@ -451,13 +527,25 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
       });
       createBlock(created);
       setCreatedBlockId(created.id);
-      ui.selectBlock(created.id);
+      ui.selectEntry(created.id);
       return;
     }
 
-    if (finished.blockId !== null) {
-      updateBlock(finished.blockId, { startUtc, endUtc });
+    if (finished.blockId === null) return;
+
+    const moved = blocks.find((entry) => entry.entryId === finished.entryId);
+    // An instance of a series cannot simply be updated: the row behind it is
+    // shared by every other instance, so the scope has to be asked for first.
+    if (moved !== undefined && moved.occurrenceStartUtc !== null) {
+      setPendingScope({
+        action: "edit",
+        ref: { seriesId: moved.id, originalStartUtc: moved.occurrenceStartUtc },
+        patch: { startUtc, endUtc },
+      });
+      return;
     }
+
+    updateBlock(finished.blockId, { startUtc, endUtc });
   }
 
   function handleDoubleClick(event: ReactMouseEvent<HTMLDivElement>): void {
@@ -482,16 +570,16 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
     (direction: "up" | "down" | "left" | "right") => {
       if (orderedBlocks.length === 0) return;
 
-      const current = orderedBlocks.find((block) => block.id === selectedBlockId);
+      const current = orderedBlocks.find((block) => block.entryId === selectedEntryId);
       if (current === undefined) {
-        ui.selectBlock(orderedBlocks[0].id);
+        ui.selectEntry(orderedBlocks[0].entryId);
         return;
       }
 
       if (direction === "up" || direction === "down") {
         const index = orderedBlocks.indexOf(current);
         const next = orderedBlocks[direction === "down" ? index + 1 : index - 1];
-        if (next !== undefined) ui.selectBlock(next.id);
+        if (next !== undefined) ui.selectEntry(next.entryId);
         return;
       }
 
@@ -510,17 +598,17 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
             ? candidate
             : best,
         );
-        ui.selectBlock(nearest.id);
+        ui.selectEntry(nearest.entryId);
         return;
       }
     },
-    [orderedBlocks, selectedBlockId, days, tz],
+    [orderedBlocks, selectedEntryId, days, tz],
   );
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
       if (event.key === "Escape") {
-        if (editingTitleBlockId !== null) ui.stopTitleEdit();
+        if (editingTitleEntryId !== null) ui.stopTitleEdit();
         else ui.closeInspector();
         return;
       }
@@ -543,7 +631,7 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
       /* SPEC 10 gives the arrows to the previous and next period, PLAN phase 3
          gives them to block selection. With a block selected they move the
          selection; with nothing selected they move the week. */
-      if (selectedBlockId === null) {
+      if (selectedEntryId === null) {
         if (event.key === "ArrowLeft") {
           event.preventDefault();
           setAnchorUtc((current) => shiftWeeks(current, tz, -1));
@@ -554,12 +642,15 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
         return;
       }
 
+      // Selection is by entry, mutation is by row, so the entry has to be
+      // resolved before either can act.
+      const entry = blocks.find((candidate) => candidate.entryId === selectedEntryId);
+
       if (event.key === "Enter") {
         event.preventDefault();
-        const block = blocks.find((candidate) => candidate.id === selectedBlockId);
-        if (block === undefined) return;
-        const done = block.status === "done";
-        updateBlock(selectedBlockId, {
+        if (entry === undefined) return;
+        const done = entry.status === "done";
+        updateBlock(entry.id, {
           status: done ? "open" : "done",
           completedUtc: done ? null : Date.now(),
         });
@@ -568,8 +659,19 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
 
       if (event.key === "Delete") {
         event.preventDefault();
-        softDeleteBlock(selectedBlockId);
-        setToast({ message: "Block deleted", undoBlockId: selectedBlockId });
+        if (entry === undefined) return;
+
+        if (entry.occurrenceStartUtc !== null) {
+          setPendingScope({
+            action: "delete",
+            ref: { seriesId: entry.id, originalStartUtc: entry.occurrenceStartUtc },
+            patch: {},
+          });
+          return;
+        }
+
+        softDeleteBlock(entry.id);
+        setToast({ message: "Block deleted", undoBlockId: entry.id });
         ui.clearSelection();
         return;
       }
@@ -591,8 +693,8 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     blocks,
-    selectedBlockId,
-    editingTitleBlockId,
+    selectedEntryId,
+    editingTitleEntryId,
     updateBlock,
     softDeleteBlock,
     moveSelection,
@@ -731,9 +833,9 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
                 nowUtc={nowUtc}
                 hourHeight={hourHeight}
                 isToday={isSameLocalDay(dayStart, nowUtc, tz)}
-                selectedBlockId={selectedBlockId}
-                editingBlockId={editingTitleBlockId}
-                draggingBlockId={drag?.moved === true ? drag.blockId : null}
+                selectedEntryId={selectedEntryId}
+                editingEntryId={editingTitleEntryId}
+                draggingEntryId={drag?.moved === true ? drag.blockId : null}
                 ghost={createGhost !== null && createGhost.dayIndex === index ? createGhost : null}
                 onTitleCommit={handleTitleCommit}
                 onTitleCancel={ui.stopTitleEdit}
@@ -744,12 +846,21 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
       </div>
       </div>
 
-      {inspectorOpen && selectedBlock !== null && (
+      {pendingScope !== null && (
+        <RecurrenceScopePrompt
+          action={pendingScope.action}
+          onChoose={(scope) => void runScope(scope)}
+          onCancel={() => setPendingScope(null)}
+        />
+      )}
+
+      {inspectorOpen && selectedEntry !== null && (
         <Inspector
-          block={selectedBlock}
+          block={selectedEntry}
           tz={tz}
-          autoFocusTitle={selectedBlock.id === createdBlockId}
-          onChange={(patch) => updateBlock(selectedBlock.id, patch)}
+          autoFocusTitle={selectedEntry.id === createdBlockId}
+          partOfSeries={selectedEntry.occurrenceStartUtc !== null}
+          onChange={(patch) => updateBlock(selectedEntry.id, patch)}
           onClose={ui.closeInspector}
         />
       )}
@@ -766,7 +877,7 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
                     const id = toast.undoBlockId;
                     if (id === null) return;
                     restoreBlock(id);
-                    ui.selectBlock(id);
+                    ui.selectEntry(id);
                     setToast(null);
                   },
                 }
