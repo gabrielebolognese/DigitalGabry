@@ -204,6 +204,75 @@ body,
   background-color: var(--scrim);
 }
 
+/* Momentum chart, hand written SVG. Stroke widths are corrected for the
+   horizontal scale by vectorEffect on the elements themselves, so these are
+   true pixel widths. */
+.chart-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: var(--chart-line-w);
+  stroke-linejoin: round;
+}
+
+.chart-area {
+  fill: var(--accent-weak);
+  stroke: none;
+}
+
+.chart-raw-bar {
+  stroke: var(--border);
+  stroke-width: var(--hairline);
+}
+
+.chart-gridline {
+  stroke: var(--border-hair);
+  stroke-width: var(--hairline);
+}
+
+.chart-cursor {
+  stroke: var(--border-strong);
+  stroke-width: var(--hairline);
+}
+
+.chart-axis-label {
+  fill: var(--text-tertiary);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Consistency heatmap, SPEC 8.7. */
+.heat-grid {
+  gap: var(--heat-gap);
+}
+
+.heat-column {
+  gap: var(--heat-gap);
+}
+
+.heat-cell {
+  width: var(--heat-cell);
+  height: var(--heat-cell);
+  flex: none;
+  border-radius: var(--radius-block);
+  background-color: var(--bg-surface);
+}
+
+.heat-1 {
+  background-color: color-mix(in srgb, var(--accent) 20%, var(--bg-surface));
+}
+.heat-2 {
+  background-color: color-mix(in srgb, var(--accent) 40%, var(--bg-surface));
+}
+.heat-3 {
+  background-color: color-mix(in srgb, var(--accent) 60%, var(--bg-surface));
+}
+.heat-4 {
+  background-color: color-mix(in srgb, var(--accent) 80%, var(--bg-surface));
+}
+.heat-5 {
+  background-color: var(--accent);
+}
+
 .cal-body {
   height: calc(var(--hour-h) * 24);
 }

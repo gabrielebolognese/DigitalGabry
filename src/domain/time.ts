@@ -201,6 +201,12 @@ export function formatTime(utcMs: UtcMillis, tz: string): string {
   return formatInTimeZone(new Date(utcMs), tz, "HH:mm");
 }
 
+/* The calendar day an instant falls on in a zone, as the 'YYYY-MM-DD' string
+   the activity log stores. */
+export function localDateOf(utcMs: UtcMillis, tz: string): string {
+  return formatInTimeZone(new Date(utcMs), tz, "yyyy-MM-dd");
+}
+
 export function formatWeekday(utcMs: UtcMillis, tz: string): string {
   return formatInTimeZone(new Date(utcMs), tz, "EEE");
 }

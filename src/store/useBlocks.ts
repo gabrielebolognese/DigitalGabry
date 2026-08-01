@@ -10,6 +10,7 @@ import {
   listBlocksInRange,
   restoreBlock as restoreInDb,
   softDeleteBlock as softDeleteInDb,
+  syncBlockActivity,
   updateBlock as updateInDb,
 } from "../db/repository";
 
@@ -185,10 +186,15 @@ export function useBlocks(range: UtcRange, tz: string): BlocksApi {
     (id: string, patch: Partial<Block>) => {
       optimistic(
         (next) => patchById(next, id, { ...patch, updatedUtc: Date.now() }),
-        () => updateInDb(id, patch),
+        async () => {
+          await updateInDb(id, patch);
+          // Completing a post with a platform logs it against momentum, and
+          // un-completing takes it back out. SPEC 8.6.
+          if (patch.status !== undefined) await syncBlockActivity(id, tz);
+        },
       );
     },
-    [optimistic, patchById],
+    [optimistic, patchById, tz],
   );
 
   const softDeleteBlock = useCallback(
