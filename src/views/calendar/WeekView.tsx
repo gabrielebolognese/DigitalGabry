@@ -859,6 +859,7 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
           block={selectedEntry}
           tz={tz}
           autoFocusTitle={selectedEntry.id === createdBlockId}
+          partOfSeries={selectedEntry.occurrenceStartUtc !== null}
           onChange={(patch) => updateBlock(selectedEntry.id, patch)}
           onClose={ui.closeInspector}
         />
