@@ -114,6 +114,11 @@
   --block-min-h: 20px;
   --block-overflow-h: 16px;
 
+  /* Momentum, SPEC 8.7 */
+  --chart-line-w: 1.5px;
+  --heat-cell: 9px;
+  --heat-gap: 2px;
+
   /* State opacities, SPEC 5.1 */
   --opacity-completed: 0.7;
   --opacity-completed-icon: 0.5;

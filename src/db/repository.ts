@@ -20,7 +20,14 @@ import {
   type OccurrenceRef,
 } from "../domain/recurrence";
 import { uuidv7 } from "../domain/id";
-import type { UtcRange } from "../domain/time";
+import {
+  DEFAULT_MOMENTUM_CONSTANTS,
+  computeSeries,
+  type ActivityCount,
+  type MomentumConstants,
+  type MomentumDay,
+} from "../domain/momentum";
+import { localDateOf, type UtcRange } from "../domain/time";
 import { execute, query, transaction, type SqlValue, type Step } from "./client";
 import {
   applyBatch,
@@ -608,6 +615,310 @@ export async function softDeleteActivity(id: string): Promise<void> {
   await applyUpdate("activity_log", id, [
     { field: "deleted_utc", oldValue: null, newValue: Date.now() },
   ]);
+}
+
+export async function activityForBlock(blockId: string): Promise<string[]> {
+  const rows = await query<{ id: string }>(
+    "SELECT id FROM activity_log WHERE block_id = ? AND deleted_utc IS NULL",
+    [blockId],
+  );
+  return rows.map((row) => row.id);
+}
+
+/* SPEC 8.6 says to match "by platform and format" but the seeds carry two or
+   three types per platform. The post variant is preferred where one exists,
+   otherwise the lowest sort_order for that platform. */
+function activityTypeForPlatform(
+  types: readonly ActivityType[],
+  platform: string,
+): ActivityType | null {
+  const candidates = types
+    .filter((type) => !type.archived && type.icon === platform)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+  if (candidates.length === 0) return null;
+  return candidates.find((type) => /post/i.test(type.name)) ?? candidates[0];
+}
+
+/* Completing a post with a platform logs it; un-completing removes the log.
+   SPEC 8.6. Auto-logged rows carry source='block' so they can be told apart
+   from anything typed by hand. */
+export async function syncBlockActivity(
+  blockId: string,
+  tz: string,
+): Promise<boolean> {
+  const block = await getBlock(blockId);
+  if (block === null) return false;
+
+  const existing = await activityForBlock(blockId);
+  const platform = block.payload.platform;
+  const shouldLog =
+    block.kind === "post" && platform !== undefined && block.status === "done";
+
+  if (!shouldLog) {
+    for (const id of existing) await softDeleteActivity(id);
+    return existing.length > 0;
+  }
+
+  if (existing.length > 0) return false;
+
+  const type = activityTypeForPlatform(await listActivityTypes(), platform);
+  if (type === null) return false;
+
+  const when = block.completedUtc ?? block.startUtc ?? Date.now();
+  await insertActivity({
+    activityTypeId: type.id,
+    localDate: localDateOf(when, tz),
+    source: "block",
+    blockId,
+  });
+  return true;
+}
+
+const ACTIVITY_TYPE_COLUMN: Record<string, string> = {
+  name: "name",
+  icon: "icon",
+  category: "category",
+  weight: "weight",
+  dailyCap: "daily_cap",
+  unit: "unit",
+  archived: "archived",
+  sortOrder: "sort_order",
+};
+
+export async function updateActivityType(
+  id: string,
+  patch: Partial<ActivityType>,
+): Promise<void> {
+  const current = (await listActivityTypes()).find((type) => type.id === id);
+  if (current === undefined) throw new Error(`Activity type ${id} not found`);
+
+  const changes: FieldChange[] = [];
+  for (const [key, column] of Object.entries(ACTIVITY_TYPE_COLUMN)) {
+    const field = key as keyof ActivityType;
+    if (!(field in patch)) continue;
+    changes.push({
+      field: column,
+      oldValue: toSql(current[field]),
+      newValue: toSql(patch[field]),
+    });
+  }
+  if (changes.length > 0) await applyUpdate("activity_type", id, changes);
+}
+
+export async function createActivityType(
+  input: Omit<ActivityType, "id">,
+): Promise<string> {
+  const id = uuidv7();
+  const now = Date.now();
+  await applyInsert("activity_type", id, {
+    sql: `INSERT INTO activity_types
+            (id, name, icon, category, weight, daily_cap, unit, archived,
+             sort_order, created_utc, updated_utc, hlc, device_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    params: [
+      id,
+      input.name,
+      input.icon,
+      input.category,
+      input.weight,
+      input.dailyCap,
+      input.unit,
+      input.archived ? 1 : 0,
+      input.sortOrder,
+      now,
+      now,
+      "",
+      "",
+    ],
+  });
+  return id;
+}
+
+/* ----------------------------------------------------------------------------
+   Settings
+   ------------------------------------------------------------------------- */
+
+export async function readSetting(key: string): Promise<string | null> {
+  const rows = await query<{ value: string }>(
+    "SELECT value FROM settings WHERE key = ?",
+    [key],
+  );
+  return rows[0]?.value ?? null;
+}
+
+export async function writeSetting(key: string, value: string): Promise<void> {
+  await execute(
+    "INSERT OR REPLACE INTO settings (key, value, updated_utc) VALUES (?, ?, ?)",
+    [key, value, Date.now()],
+  );
+}
+
+const CONSTANTS_KEY = "momentum.constants";
+
+export async function readMomentumConstants(): Promise<MomentumConstants> {
+  const raw = await readSetting(CONSTANTS_KEY);
+  if (raw === null) return DEFAULT_MOMENTUM_CONSTANTS;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object") return DEFAULT_MOMENTUM_CONSTANTS;
+    // Spread over the defaults so a partial or older record still yields a
+    // complete set rather than undefined arithmetic.
+    return { ...DEFAULT_MOMENTUM_CONSTANTS, ...(parsed as Partial<MomentumConstants>) };
+  } catch {
+    return DEFAULT_MOMENTUM_CONSTANTS;
+  }
+}
+
+export async function writeMomentumConstants(
+  constants: MomentumConstants,
+): Promise<void> {
+  await writeSetting(CONSTANTS_KEY, JSON.stringify(constants));
+}
+
+/* ----------------------------------------------------------------------------
+   Momentum cache
+   ------------------------------------------------------------------------- */
+
+/* Rows per statement at six parameters each, under the legacy 999 ceiling. */
+const MOMENTUM_CHUNK_ROWS = 120;
+
+export type RecomputeReport = {
+  days: number;
+  elapsedMs: number;
+};
+
+/* Wipes momentum_daily and rebuilds it from activity_log in one transaction.
+   The read is deliberately unbounded: this is a full rebuild of a derived
+   cache, not a calendar read, so invariant 7 does not apply to it. The hard
+   DELETE is likewise fine, because momentum_daily has no deleted_utc: it is a
+   cache, and SPEC 8.4 says it is never a source of truth. */
+export async function recomputeMomentum(
+  constants?: MomentumConstants,
+): Promise<RecomputeReport> {
+  const began = Date.now();
+  const settings = constants ?? (await readMomentumConstants());
+  const types = await listActivityTypes();
+
+  const rows = await query<{
+    local_date: string;
+    activity_type_id: string;
+    count: number;
+  }>(
+    `SELECT local_date, activity_type_id, count FROM activity_log
+      WHERE deleted_utc IS NULL ORDER BY local_date`,
+  );
+
+  const logsByDate = new Map<string, ActivityCount[]>();
+  for (const row of rows) {
+    const existing = logsByDate.get(row.local_date);
+    const entry = { activityTypeId: row.activity_type_id, count: row.count };
+    if (existing === undefined) logsByDate.set(row.local_date, [entry]);
+    else existing.push(entry);
+  }
+
+  const series = computeSeries({
+    logsByDate,
+    types: types.map((type) => ({
+      id: type.id,
+      weight: type.weight,
+      dailyCap: type.dailyCap,
+    })),
+    constants: settings,
+  });
+
+  const computedUtc = Date.now();
+  const steps: Step[] = [{ sql: "DELETE FROM momentum_daily", params: [] }];
+
+  for (let index = 0; index < series.length; index += MOMENTUM_CHUNK_ROWS) {
+    const chunk = series.slice(index, index + MOMENTUM_CHUNK_ROWS);
+    const params: SqlValue[] = [];
+    for (const day of chunk) {
+      params.push(
+        day.localDate,
+        day.rawScore,
+        day.multiplier,
+        day.momentum,
+        day.streak,
+        computedUtc,
+      );
+    }
+    steps.push({
+      sql:
+        `INSERT INTO momentum_daily
+           (local_date, raw_score, multiplier, momentum, streak, computed_utc) VALUES ` +
+        chunk.map(() => "(?, ?, ?, ?, ?, ?)").join(", "),
+      params,
+    });
+  }
+
+  await transaction(steps);
+  return { days: series.length, elapsedMs: Date.now() - began };
+}
+
+export async function readMomentumDaily(
+  fromLocalDate: string,
+  toLocalDate: string,
+): Promise<MomentumDay[]> {
+  const rows = await query<{
+    local_date: string;
+    raw_score: number;
+    multiplier: number;
+    momentum: number;
+    streak: number;
+  }>(
+    `SELECT local_date, raw_score, multiplier, momentum, streak
+       FROM momentum_daily
+      WHERE local_date >= ? AND local_date <= ?
+      ORDER BY local_date`,
+    [fromLocalDate, toLocalDate],
+  );
+
+  return rows.map((row) => ({
+    localDate: row.local_date,
+    rawScore: row.raw_score,
+    multiplier: row.multiplier,
+    momentum: row.momentum,
+    streak: row.streak,
+  }));
+}
+
+export type ActivityTotal = {
+  activityTypeId: string;
+  count: number;
+  points: number;
+};
+
+/* Contribution by type over a date range, for the breakdown table. Capping is
+   per day, so the points column is folded here rather than in SQL. */
+export async function activityTotals(
+  fromLocalDate: string,
+  toLocalDate: string,
+): Promise<ActivityTotal[]> {
+  const types = await listActivityTypes();
+  const byId = new Map(types.map((type) => [type.id, type]));
+  const entries = await listActivityBetween(fromLocalDate, toLocalDate);
+
+  const perDay = new Map<string, Map<string, number>>();
+  for (const entry of entries) {
+    const day = perDay.get(entry.localDate) ?? new Map<string, number>();
+    day.set(entry.activityTypeId, (day.get(entry.activityTypeId) ?? 0) + entry.count);
+    perDay.set(entry.localDate, day);
+  }
+
+  const totals = new Map<string, ActivityTotal>();
+  for (const day of perDay.values()) {
+    for (const [typeId, rawCount] of day) {
+      const type = byId.get(typeId);
+      if (type === undefined) continue;
+      const counted = Math.min(rawCount, type.dailyCap);
+      const running = totals.get(typeId) ?? { activityTypeId: typeId, count: 0, points: 0 };
+      running.count += rawCount;
+      running.points += counted * type.weight;
+      totals.set(typeId, running);
+    }
+  }
+
+  return [...totals.values()].sort((a, b) => b.points - a.points);
 }
 
 /* ----------------------------------------------------------------------------

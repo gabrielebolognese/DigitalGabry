@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import WeekView from "../views/calendar/WeekView";
-import Rail, { VIEW_LABELS, type ViewId } from "./Rail";
+import MomentumView from "../views/momentum/MomentumView";
+import SettingsView from "../views/settings/SettingsView";
+import Rail, { type ViewId } from "./Rail";
 import Splitter from "./Splitter";
 
 const PANEL_WIDTH_KEY = "digitalgabry.panel-width";
@@ -53,13 +55,10 @@ export default function AppShell({ view, onViewChange }: AppShellProps) {
             period navigation in it and the placeholders do not. */}
         {view === "calendar" ? (
           <WeekView />
+        ) : view === "momentum" ? (
+          <MomentumView />
         ) : (
-          <>
-            <header className="shell-header shrink-0 border-b border-hair" />
-            <div className="flex min-h-0 flex-1 items-center justify-center">
-              <span className="text-title text-tertiary">{VIEW_LABELS[view]}</span>
-            </div>
-          </>
+          <SettingsView />
         )}
       </main>
 
