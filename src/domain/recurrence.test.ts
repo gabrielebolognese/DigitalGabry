@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   RECURRENCE_MAX_OCCURRENCES,
   applyExceptions,
+  countBefore,
   generateOccurrences,
   parseRrule,
+  splitRuleAt,
   type OccurrenceSeed,
 } from "./recurrence";
 import { DEFAULT_TZ, localMinutesOfDay, wallClockOf } from "./time";
@@ -171,6 +173,64 @@ describe("generateOccurrences", () => {
     expect(result.occurrences.length).toBeGreaterThan(500);
     expect(Date.now() - began).toBeLessThan(500);
     expect(RECURRENCE_MAX_OCCURRENCES).toBeGreaterThan(result.occurrences.length);
+  });
+});
+
+describe("splitRuleAt", () => {
+  const daily = seed("FREQ=DAILY");
+
+  it("returns no head when the split is the first instance", () => {
+    const split = splitRuleAt(daily, daily.startUtc);
+    expect(split.ok).toBe(true);
+    if (!split.ok) return;
+    expect(split.value.head).toBeNull();
+    expect(split.value.tail).toBe("FREQ=DAILY");
+  });
+
+  it("bounds the head one second before the split", () => {
+    // Third instance, 2026-01-07 09:00 Rome.
+    const third = utc("2026-01-07T08:00:00Z");
+    const split = splitRuleAt(daily, third);
+    expect(split.ok).toBe(true);
+    if (!split.ok) return;
+    // UNTIL is inclusive, so it lands on 08:59:59 the same morning.
+    expect(split.value.head).toBe("FREQ=DAILY;UNTIL=20260107T085959");
+    expect(split.value.tail).toBe("FREQ=DAILY");
+  });
+
+  it("leaves the head covering exactly the instances before the split", () => {
+    const third = utc("2026-01-07T08:00:00Z");
+    const split = splitRuleAt(daily, third);
+    if (!split.ok || split.value.head === null) throw new Error("expected a head");
+
+    const head = generateOccurrences({ ...daily, rrule: split.value.head }, {
+      start: utc("2026-01-01T00:00:00Z"),
+      end: utc("2026-02-01T00:00:00Z"),
+    });
+    expect(head.occurrences).toHaveLength(2);
+  });
+
+  it("splits a counted rule by rewriting both counts", () => {
+    const counted = seed("FREQ=DAILY;COUNT=10");
+    const third = utc("2026-01-07T08:00:00Z");
+    const split = splitRuleAt(counted, third);
+    expect(split.ok).toBe(true);
+    if (!split.ok) return;
+    // COUNT and UNTIL are mutually exclusive, so neither side may gain UNTIL.
+    expect(split.value.head).toBe("FREQ=DAILY;COUNT=2");
+    expect(split.value.tail).toBe("FREQ=DAILY;COUNT=8");
+  });
+
+  it("reports an unparseable rule rather than splitting it", () => {
+    expect(splitRuleAt(seed("FREQ=SECONDLY"), Date.now()).ok).toBe(false);
+  });
+});
+
+describe("countBefore", () => {
+  it("counts instances strictly before an instant", () => {
+    const daily = seed("FREQ=DAILY");
+    expect(countBefore(daily, daily.startUtc)).toBe(0);
+    expect(countBefore(daily, utc("2026-01-08T08:00:00Z"))).toBe(3);
   });
 });
 

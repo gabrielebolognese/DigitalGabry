@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Block, CalendarEntry } from "../domain/block";
 import type { UtcRange } from "../domain/time";
+import { listen } from "@tauri-apps/api/event";
 import { primeClock } from "../db/ops";
 import { ensureMaterialized } from "../scheduler/materialize";
+import { BLOCKS_CHANGED } from "./events";
 import {
   insertBlock,
   listBlocksInRange,
@@ -19,6 +21,9 @@ export type BlocksApi = {
   updateBlock: (id: string, patch: Partial<Block>) => void;
   softDeleteBlock: (id: string) => void;
   restoreBlock: (id: string) => void;
+  /* Forces a re-read. Used after an operation that writes rows this hook did
+     not issue itself, such as a recurrence edit scope. */
+  refresh: () => void;
 };
 
 /* One screen of buffer either side of the viewport is fetched, and anything
@@ -52,10 +57,24 @@ function asEntry(block: Block): CalendarEntry {
 }
 
 export function useBlocks(range: UtcRange, tz: string): BlocksApi {
-
   const [cache, setCache] = useState<Cache>(() => new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [refreshToken, setRefreshToken] = useState(0);
+
+  /* The capture window writes to the same database this window reads, so a
+     captured block would not appear until the week changed without this. */
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void listen(BLOCKS_CHANGED, () => setRefreshToken((token) => token + 1)).then(
+      (stop) => {
+        unlisten = stop;
+      },
+    );
+    return () => {
+      if (unlisten !== null) unlisten();
+    };
+  }, []);
 
   const cacheRef = useRef<Cache>(cache);
   cacheRef.current = cache;
@@ -96,7 +115,7 @@ export function useBlocks(range: UtcRange, tz: string): BlocksApi {
     return () => {
       cancelled = true;
     };
-  }, [start, end, span, tz]);
+  }, [start, end, span, tz, refreshToken]);
 
   // Adjacent weeks are fetched only when the main thread has nothing better to
   // do, so a fast scroll never waits on a prefetch.
@@ -119,7 +138,7 @@ export function useBlocks(range: UtcRange, tz: string): BlocksApi {
       })();
     });
     return () => window.cancelIdleCallback(handle);
-  }, [start, end, span, tz]);
+  }, [start, end, span, tz, refreshToken]);
 
   /* Mutations land in local state immediately and reconcile against the write.
      A rejected write puts the previous snapshot back and reports the failure
@@ -197,5 +216,16 @@ export function useBlocks(range: UtcRange, tz: string): BlocksApi {
     [cache],
   );
 
-  return { blocks, loading, error, createBlock, updateBlock, softDeleteBlock, restoreBlock };
+  const refresh = useCallback(() => setRefreshToken((token) => token + 1), []);
+
+  return {
+    blocks,
+    loading,
+    error,
+    createBlock,
+    updateBlock,
+    softDeleteBlock,
+    restoreBlock,
+    refresh,
+  };
 }

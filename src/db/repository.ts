@@ -14,13 +14,21 @@ import {
 } from "../domain/block";
 import {
   occurrenceId,
+  splitRuleAt,
   type ExceptionMarker,
   type GeneratedOccurrence,
+  type OccurrenceRef,
 } from "../domain/recurrence";
 import { uuidv7 } from "../domain/id";
 import type { UtcRange } from "../domain/time";
 import { execute, query, transaction, type SqlValue, type Step } from "./client";
-import { applyInsert, applyUpdate, type FieldChange } from "./ops";
+import {
+  applyBatch,
+  applyInsert,
+  applyUpdate,
+  type EntityChange,
+  type FieldChange,
+} from "./ops";
 
 const BLOCK_FIELDS = [
   "id",
@@ -771,4 +779,268 @@ export async function sweepOccurrences(window: UtcRange): Promise<void> {
     window.end,
     window.start,
   ]);
+}
+
+/* ----------------------------------------------------------------------------
+   Recurrence edit scopes
+   ------------------------------------------------------------------------- */
+
+function fieldChanges(current: Block, patch: Partial<Block>): FieldChange[] {
+  const changes: FieldChange[] = [];
+  for (const [key, column] of Object.entries(COLUMN_OF)) {
+    if (column === undefined) continue;
+    const field = key as keyof Block;
+    if (!(field in patch)) continue;
+    changes.push({
+      field: column,
+      oldValue: encodeField(field, current[field]),
+      newValue: encodeField(field, patch[field]),
+    });
+  }
+  return changes;
+}
+
+export function isTemporalPatch(patch: Partial<Block>): boolean {
+  return (
+    patch.startUtc !== undefined ||
+    patch.endUtc !== undefined ||
+    patch.tz !== undefined ||
+    patch.rrule !== undefined
+  );
+}
+
+export async function listExceptionBlocks(seriesId: string): Promise<Block[]> {
+  const rows = await query<BlockRow>(
+    `SELECT ${BLOCK_COLUMNS} FROM blocks
+      WHERE recurrence_parent_id = ? AND deleted_utc IS NULL AND is_exception <> 0`,
+    [seriesId],
+  );
+  return hydrate(rows);
+}
+
+async function existingException(ref: OccurrenceRef): Promise<Block | null> {
+  const rows = await query<BlockRow>(
+    `SELECT ${BLOCK_COLUMNS} FROM blocks
+      WHERE recurrence_parent_id = ? AND recurrence_original_start_utc = ?
+        AND deleted_utc IS NULL AND is_exception <> 0`,
+    [ref.seriesId, ref.originalStartUtc],
+  );
+  if (rows.length === 0) return null;
+  const [block] = await hydrate(rows);
+  return block ?? null;
+}
+
+function exceptionRow(
+  seed: Block,
+  ref: OccurrenceRef,
+  role: ExceptionRole,
+  patch: Partial<Block>,
+): Block {
+  const now = Date.now();
+  return {
+    ...seed,
+    ...patch,
+    id: uuidv7(),
+    // An exception is a single instance, never a rule of its own.
+    rrule: null,
+    recurrenceParentId: ref.seriesId,
+    exceptionRole: role,
+    recurrenceOriginalStartUtc: ref.originalStartUtc,
+    createdUtc: now,
+    updatedUtc: now,
+    deletedUtc: null,
+  };
+}
+
+/* Edits one instance. The partial unique index allows at most one live
+   exception per instant, so an existing one is updated rather than duplicated. */
+export async function editOccurrence(
+  ref: OccurrenceRef,
+  patch: Partial<Block>,
+): Promise<void> {
+  const seed = await getBlock(ref.seriesId);
+  if (seed === null) throw new Error(`Series ${ref.seriesId} not found`);
+
+  const existing = await existingException(ref);
+  if (existing !== null) {
+    await updateBlock(existing.id, { ...patch, exceptionRole: "override" });
+  } else {
+    const row = exceptionRow(seed, ref, "override", patch);
+    await applyInsert("block", row.id, insertStep(row));
+  }
+  await deleteOccurrenceAt(ref.seriesId, ref.originalStartUtc);
+}
+
+/* Deleting one instance writes a cancellation marker rather than removing
+   anything, so undo tombstones the marker and the occurrence regenerates. */
+export async function cancelOccurrence(ref: OccurrenceRef): Promise<void> {
+  const seed = await getBlock(ref.seriesId);
+  if (seed === null) throw new Error(`Series ${ref.seriesId} not found`);
+
+  const existing = await existingException(ref);
+  if (existing !== null) {
+    await updateBlock(existing.id, { exceptionRole: "cancelled" });
+  } else {
+    const duration = (seed.endUtc ?? 0) - (seed.startUtc ?? 0);
+    // Times stay at the original instant, so the row is self describing when
+    // read straight out of the database.
+    const row = exceptionRow(seed, ref, "cancelled", {
+      startUtc: ref.originalStartUtc,
+      endUtc: ref.originalStartUtc + duration,
+    });
+    await applyInsert("block", row.id, insertStep(row));
+  }
+  await deleteOccurrenceAt(ref.seriesId, ref.originalStartUtc);
+}
+
+/* Any temporal change moves every generated anchor, orphaning every exception
+   pinned to an old one. Rather than re-anchoring them, which is silently wrong
+   for a rule change and untestable, they are reset. The caller is expected to
+   have confirmed the count first. */
+export async function editSeries(
+  seriesId: string,
+  patch: Partial<Block>,
+): Promise<number> {
+  const current = await getBlock(seriesId);
+  if (current === null) throw new Error(`Series ${seriesId} not found`);
+
+  const exceptions = isTemporalPatch(patch) ? await listExceptionBlocks(seriesId) : [];
+  const stamp = Date.now();
+
+  const changes: EntityChange[] = [
+    {
+      op: "update",
+      entity: "block",
+      entityId: seriesId,
+      changes: fieldChanges(current, patch),
+    },
+    ...exceptions.map((exception): EntityChange => ({
+      op: "update",
+      entity: "block",
+      entityId: exception.id,
+      changes: [{ field: "deleted_utc", oldValue: null, newValue: stamp }],
+    })),
+  ];
+
+  await applyBatch(changes);
+  return exceptions.length;
+}
+
+/* Deleting this and every later instance is a truncation, not a split: the head
+   keeps its history and no tail is created. */
+export async function truncateSeriesAt(ref: OccurrenceRef): Promise<void> {
+  const seed = await getBlock(ref.seriesId);
+  if (seed === null || seed.startUtc === null || seed.endUtc === null) return;
+  if (seed.rrule === null) return;
+
+  const split = splitRuleAt(
+    {
+      blockId: seed.id,
+      startUtc: seed.startUtc,
+      endUtc: seed.endUtc,
+      tz: seed.tz,
+      rrule: seed.rrule,
+    },
+    ref.originalStartUtc,
+  );
+  if (!split.ok) return;
+
+  // Nothing before the split means the whole series goes.
+  if (split.value.head === null) {
+    await softDeleteBlock(ref.seriesId);
+    return;
+  }
+  await editSeries(ref.seriesId, { rrule: split.value.head });
+}
+
+export type FutureEditResult = {
+  tailId: string;
+  resetExceptions: number;
+};
+
+/* Splits the series. The tail is a fork rather than a child: recurrence_parent_id
+   means "this is an exception of X" and nothing else, and a later series edit on
+   the tail must not walk back into the head. Provenance lives in the payload. */
+export async function editFuture(
+  ref: OccurrenceRef,
+  patch: Partial<Block>,
+): Promise<FutureEditResult | null> {
+  const seed = await getBlock(ref.seriesId);
+  if (seed === null || seed.startUtc === null || seed.endUtc === null) return null;
+  if (seed.rrule === null) return null;
+
+  const split = splitRuleAt(
+    {
+      blockId: seed.id,
+      startUtc: seed.startUtc,
+      endUtc: seed.endUtc,
+      tz: seed.tz,
+      rrule: seed.rrule,
+    },
+    ref.originalStartUtc,
+  );
+  if (!split.ok) return null;
+
+  /* No head means the split point is the first instance, so this is just an
+     edit of the whole series. Otherwise the head would end up with an UNTIL
+     earlier than its own DTSTART: an empty series and an orphaned row. */
+  if (split.value.head === null) {
+    const reset = await editSeries(ref.seriesId, patch);
+    return { tailId: ref.seriesId, resetExceptions: reset };
+  }
+
+  const now = Date.now();
+  const duration = seed.endUtc - seed.startUtc;
+  const tailStart = patch.startUtc ?? ref.originalStartUtc;
+  const tailEnd = patch.endUtc ?? tailStart + duration;
+
+  const tail: Block = {
+    ...seed,
+    ...patch,
+    id: uuidv7(),
+    startUtc: tailStart,
+    endUtc: tailEnd,
+    rrule: split.value.tail,
+    recurrenceParentId: null,
+    exceptionRole: "none",
+    recurrenceOriginalStartUtc: null,
+    payload: { ...seed.payload, splitFromId: seed.id, splitAtUtc: ref.originalStartUtc },
+    createdUtc: now,
+    updatedUtc: now,
+    deletedUtc: null,
+  };
+
+  const later = (await listExceptionBlocks(ref.seriesId)).filter(
+    (exception) =>
+      exception.recurrenceOriginalStartUtc !== null &&
+      exception.recurrenceOriginalStartUtc >= ref.originalStartUtc,
+  );
+  const temporal = isTemporalPatch(patch);
+
+  const changes: EntityChange[] = [
+    {
+      op: "update",
+      entity: "block",
+      entityId: seed.id,
+      changes: fieldChanges(seed, { rrule: split.value.head }),
+    },
+    { op: "insert", entity: "block", entityId: tail.id, step: insertStep(tail) },
+    ...later.map((exception): EntityChange => ({
+      op: "update",
+      entity: "block",
+      entityId: exception.id,
+      changes: temporal
+        ? [{ field: "deleted_utc", oldValue: null, newValue: now }]
+        : [
+            {
+              field: "recurrence_parent_id",
+              oldValue: exception.recurrenceParentId,
+              newValue: tail.id,
+            },
+          ],
+    })),
+  ];
+
+  await applyBatch(changes);
+  return { tailId: tail.id, resetExceptions: temporal ? later.length : 0 };
 }

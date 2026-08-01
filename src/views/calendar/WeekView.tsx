@@ -13,9 +13,21 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import BlockBox from "../../components/Block";
 import Inspector from "../../components/Inspector";
 import Toast from "../../components/Toast";
+import RecurrenceScopePrompt from "../../components/RecurrenceScopePrompt";
+import {
+  cancelOccurrence,
+  editFuture,
+  editOccurrence,
+  editSeries,
+  softDeleteBlock as softDeleteRepositoryBlock,
+  truncateSeriesAt,
+} from "../../db/repository";
+import { materializeAll } from "../../scheduler/materialize";
+import type { EditScope, OccurrenceRef } from "../../domain/recurrence";
 import {
   isScheduled,
   newBlock,
+  type Block,
   type CalendarEntry,
 } from "../../domain/block";
 import { uuidv7 } from "../../domain/id";
@@ -266,8 +278,57 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
   const range = useMemo(() => weekRange(anchorUtc, tz), [anchorUtc, tz]);
   const days = useMemo(() => daysOfWeek(anchorUtc, tz), [anchorUtc, tz]);
 
-  const { blocks, loading, error, createBlock, updateBlock, softDeleteBlock, restoreBlock } =
-    useBlocks(range, tz);
+  const {
+    blocks,
+    loading,
+    error,
+    createBlock,
+    updateBlock,
+    softDeleteBlock,
+    restoreBlock,
+    refresh,
+  } = useBlocks(range, tz);
+
+  /* A pending action on a repeating block. SPEC defines only the exception
+     mechanism, so the scope is asked for before anything is written. */
+  const [pendingScope, setPendingScope] = useState<{
+    action: "edit" | "delete";
+    ref: OccurrenceRef;
+    patch: Partial<Block>;
+  } | null>(null);
+
+  const runScope = useCallback(
+    async (scope: EditScope) => {
+      const pending = pendingScope;
+      if (pending === null) return;
+      setPendingScope(null);
+
+      try {
+        if (pending.action === "delete") {
+          if (scope === "occurrence") await cancelOccurrence(pending.ref);
+          else if (scope === "future") await truncateSeriesAt(pending.ref);
+          else await softDeleteRepositoryBlock(pending.ref.seriesId);
+        } else if (scope === "occurrence") {
+          await editOccurrence(pending.ref, pending.patch);
+        } else if (scope === "future") {
+          await editFuture(pending.ref, pending.patch);
+        } else {
+          await editSeries(pending.ref.seriesId, pending.patch);
+        }
+
+        // The rule or its anchors may have moved, so the cache has to be
+        // rebuilt before the next read.
+        await materializeAll(Date.now(), tz, { force: true });
+        refresh();
+      } catch (cause) {
+        setToast({
+          message: cause instanceof Error ? cause.message : "Could not change the series",
+          undoBlockId: null,
+        });
+      }
+    },
+    [pendingScope, tz, refresh],
+  );
 
   // A write that the database rejected has already been rolled back in the
   // store; the user still needs to be told the change did not stick.
@@ -470,9 +531,21 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
       return;
     }
 
-    if (finished.blockId !== null) {
-      updateBlock(finished.blockId, { startUtc, endUtc });
+    if (finished.blockId === null) return;
+
+    const moved = blocks.find((entry) => entry.entryId === finished.entryId);
+    // An instance of a series cannot simply be updated: the row behind it is
+    // shared by every other instance, so the scope has to be asked for first.
+    if (moved !== undefined && moved.occurrenceStartUtc !== null) {
+      setPendingScope({
+        action: "edit",
+        ref: { seriesId: moved.id, originalStartUtc: moved.occurrenceStartUtc },
+        patch: { startUtc, endUtc },
+      });
+      return;
     }
+
+    updateBlock(finished.blockId, { startUtc, endUtc });
   }
 
   function handleDoubleClick(event: ReactMouseEvent<HTMLDivElement>): void {
@@ -587,6 +660,16 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
       if (event.key === "Delete") {
         event.preventDefault();
         if (entry === undefined) return;
+
+        if (entry.occurrenceStartUtc !== null) {
+          setPendingScope({
+            action: "delete",
+            ref: { seriesId: entry.id, originalStartUtc: entry.occurrenceStartUtc },
+            patch: {},
+          });
+          return;
+        }
+
         softDeleteBlock(entry.id);
         setToast({ message: "Block deleted", undoBlockId: entry.id });
         ui.clearSelection();
@@ -762,6 +845,14 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
         </div>
       </div>
       </div>
+
+      {pendingScope !== null && (
+        <RecurrenceScopePrompt
+          action={pendingScope.action}
+          onChoose={(scope) => void runScope(scope)}
+          onCancel={() => setPendingScope(null)}
+        />
+      )}
 
       {inspectorOpen && selectedEntry !== null && (
         <Inspector

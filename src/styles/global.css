@@ -200,6 +200,10 @@ body,
   width: var(--inspector-w);
 }
 
+.scrim {
+  background-color: var(--scrim);
+}
+
 .cal-body {
   height: calc(var(--hour-h) * 24);
 }

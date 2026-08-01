@@ -336,3 +336,70 @@ export function generateOccurrences(
 export function occurrenceId(blockId: string, startUtc: UtcMillis): string {
   return `${blockId}:${startUtc}`;
 }
+
+export type EditScope = "occurrence" | "future" | "series";
+
+export type OccurrenceRef = {
+  readonly seriesId: string;
+  readonly originalStartUtc: UtcMillis;
+};
+
+export type RuleSplit = {
+  /* Bounded remainder of the original rule, or null when the split point is
+     the first instance and there is no head at all. */
+  readonly head: string | null;
+  readonly tail: string;
+};
+
+/* Counts instances strictly before an instant, generated from dtstart rather
+   than read out of the materialised window, which may not span the whole rule. */
+export function countBefore(seed: OccurrenceSeed, beforeUtc: UtcMillis): number {
+  if (beforeUtc <= seed.startUtc) return 0;
+  const result = generateOccurrences(seed, { start: seed.startUtc, end: beforeUtc });
+  return result.occurrences.length;
+}
+
+/* Splitting a series at an instant. The head keeps everything before it, the
+   tail carries the rest.
+ *
+ * COUNT and UNTIL are mutually exclusive per RFC 5545, so a counted rule is
+ * split by rewriting both counts rather than by bounding the head with UNTIL.
+ * UNTIL is inclusive, so the head ends one second before the split, which is
+ * correct for every rule shape without having to find the previous instance. */
+export function splitRuleAt(
+  seed: OccurrenceSeed,
+  splitUtc: UtcMillis,
+): ParseResult<RuleSplit> {
+  const parsed = parseRrule(seed.rrule, seed.tz);
+  if (!parsed.ok) return parsed;
+
+  const rule = parsed.value;
+
+  if (splitUtc <= seed.startUtc) {
+    return { ok: true, value: { head: null, tail: rule.text } };
+  }
+
+  if (rule.count !== null) {
+    const before = countBefore(seed, splitUtc);
+    if (before === 0) return { ok: true, value: { head: null, tail: rule.text } };
+    const remaining = Math.max(rule.count - before, 1);
+    return {
+      ok: true,
+      value: {
+        head: formatRrule({ ...rule, count: before, untilWall: null }),
+        tail: formatRrule({ ...rule, count: remaining, untilWall: null }),
+      },
+    };
+  }
+
+  const untilWall = wallClockOf(splitUtc - 1000, seed.tz);
+  return {
+    ok: true,
+    value: {
+      head: formatRrule({ ...rule, count: null, untilWall }),
+      // The tail inherits the original's own end, whether that was an UNTIL or
+      // nothing at all.
+      tail: formatRrule({ ...rule, count: null, untilWall: rule.untilWall }),
+    },
+  };
+}
