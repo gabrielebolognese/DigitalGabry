@@ -47,7 +47,10 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_sql::Builder::new().build())
-        .plugin(tauri_plugin_notification::init());
+        .plugin(tauri_plugin_notification::init())
+        // The API key lives in the OS app data directory via the store, never
+        // in the database and never in the repository. SPEC 9.
+        .plugin(tauri_plugin_store::Builder::new().build());
 
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());

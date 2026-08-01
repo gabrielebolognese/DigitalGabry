@@ -101,6 +101,7 @@
 
   --scrollbar-w: 8px;
   --inspector-w: 320px;
+  --panel-input-h: 36px;
   /* Dims the view behind a modal. Not in SPEC 3.1, which has no scrim. */
   --scrim: rgba(11, 11, 12, 0.72);
 

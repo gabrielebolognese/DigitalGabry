@@ -1,5 +1,8 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { emit } from "@tauri-apps/api/event";
 import { DEFAULT_TZ } from "../../domain/time";
+import { maskKey, readApiKey, writeApiKey } from "../../panel/apiKey";
+import { API_KEY_CHANGED } from "../../store/events";
 import type { MomentumConstants } from "../../domain/momentum";
 import { useMomentum } from "../../store/useMomentum";
 import ActivityTypeTable from "./ActivityTypeTable";
@@ -25,6 +28,33 @@ export default function SettingsView({ tz = DEFAULT_TZ }: { tz?: string }) {
   const momentum = useMomentum(tz);
   const [draft, setDraft] = useState<MomentumConstants | null>(null);
 
+  const [keyDraft, setKeyDraft] = useState("");
+  const [keyState, setKeyState] = useState<string | null>(null);
+  const [keyBusy, setKeyBusy] = useState(false);
+
+  const refreshKeyState = useCallback(async () => {
+    const stored = await readApiKey();
+    setKeyState(stored === null ? null : maskKey(stored));
+  }, []);
+
+  useEffect(() => {
+    void refreshKeyState();
+  }, [refreshKeyState]);
+
+  /* The value is written straight to the store and never held in state beyond
+     the keystroke, never logged, and never rendered back. SPEC 9. */
+  const saveKey = useCallback(async () => {
+    setKeyBusy(true);
+    try {
+      await writeApiKey(keyDraft);
+      setKeyDraft("");
+      await refreshKeyState();
+      await emit(API_KEY_CHANGED);
+    } finally {
+      setKeyBusy(false);
+    }
+  }, [keyDraft, refreshKeyState]);
+
   const values = draft ?? momentum.constants;
 
   return (
@@ -38,6 +68,36 @@ export default function SettingsView({ tz = DEFAULT_TZ }: { tz?: string }) {
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-3">
+        <div className="flex flex-col gap-2">
+          <span className="text-micro uppercase text-tertiary">Anthropic API key</span>
+          <span className="text-meta text-tertiary">
+            {keyState === null
+              ? "No key stored, the assistant panel is disabled"
+              : `Key ${keyState}`}
+          </span>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              className={CELL}
+              value={keyDraft}
+              placeholder={keyState === null ? "sk-ant-..." : "Replace the stored key"}
+              aria-label="Anthropic API key"
+              onChange={(event) => setKeyDraft(event.target.value)}
+            />
+            <button
+              type="button"
+              disabled={keyBusy || keyDraft.trim() === ""}
+              onClick={() => void saveKey()}
+              className="motion-hover shrink-0 rounded-control border border-line px-2 py-1 text-meta text-primary hover:bg-hover"
+            >
+              Save key
+            </button>
+          </div>
+        </div>
+
         <ActivityTypeTable types={momentum.types} onChanged={momentum.rebuild} />
 
         <div className="flex flex-col gap-2">

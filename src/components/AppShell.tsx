@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import WeekView from "../views/calendar/WeekView";
 import MomentumView from "../views/momentum/MomentumView";
 import SettingsView from "../views/settings/SettingsView";
+import AiPanel from "../panel/AiPanel";
 import Rail, { type ViewId } from "./Rail";
 import Splitter from "./Splitter";
 
@@ -67,13 +68,10 @@ export default function AppShell({ view, onViewChange }: AppShellProps) {
           <Splitter onResize={handleResize} />
           <aside
             aria-label="AI panel"
-            className="shell-panel flex shrink-0 flex-col"
+            className="shell-panel flex min-h-0 shrink-0 flex-col"
             style={panelStyle}
           >
-            <header className="shell-header shrink-0 border-b border-hair" />
-            <div className="flex flex-1 items-center justify-center">
-              <span className="text-title text-tertiary">AI panel</span>
-            </div>
+            <AiPanel />
           </aside>
         </div>
       )}
