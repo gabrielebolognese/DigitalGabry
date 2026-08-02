@@ -3,6 +3,7 @@ import { TrendingDown, TrendingUp } from "lucide-react";
 import { levelFor } from "../../domain/momentum";
 import { DEFAULT_TZ } from "../../domain/time";
 import { useMomentum } from "../../store/useMomentum";
+import { Skeleton } from "../../components/Skeleton";
 import Breakdown from "./Breakdown";
 import Heatmap from "./Heatmap";
 import MomentumChart, { type ChartRange } from "./MomentumChart";
@@ -53,15 +54,25 @@ export default function MomentumView({ tz = DEFAULT_TZ }: MomentumViewProps) {
           </span>
         )}
 
-        <MomentumChart
-          series={momentum.series}
-          range={range}
-          onRangeChange={setRange}
-        />
+        {momentum.loading ? (
+          <div role="status" aria-label="Loading momentum" className="flex flex-col gap-6">
+            <Skeleton className="h-40 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-24 w-full" />
+          </div>
+        ) : (
+          <>
+            <MomentumChart
+              series={momentum.series}
+              range={range}
+              onRangeChange={setRange}
+            />
 
-        <Breakdown totals={momentum.totals} types={momentum.types} />
+            <Breakdown totals={momentum.totals} types={momentum.types} />
 
-        <Heatmap series={momentum.series} />
+            <Heatmap series={momentum.series} />
+          </>
+        )}
       </div>
 
       <QuickLog

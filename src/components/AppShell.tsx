@@ -5,6 +5,8 @@ import SettingsView from "../views/settings/SettingsView";
 import AiPanel from "../panel/AiPanel";
 import Rail, { type ViewId } from "./Rail";
 import Splitter from "./Splitter";
+import CommandPalette from "./CommandPalette";
+import { ui } from "../store/useUiStore";
 
 const PANEL_WIDTH_KEY = "digitalgabry.panel-width";
 
@@ -62,6 +64,12 @@ export default function AppShell({ view, onViewChange }: AppShellProps) {
           <SettingsView />
         )}
       </main>
+
+      <CommandPalette
+        onViewChange={onViewChange}
+        onTogglePanel={() => setPanelOpen((open) => !open)}
+        onGoToToday={() => ui.revealInstant(Date.now())}
+      />
 
       {panelOpen && (
         <div className="flex max-panel:hidden">

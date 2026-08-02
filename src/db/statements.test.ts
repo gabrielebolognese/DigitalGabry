@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { splitStatements } from "./statements";
+import { ftsQuery } from "./repository";
 
 describe("splitStatements", () => {
   it("splits plain statements", () => {
@@ -67,5 +68,32 @@ describe("splitStatements", () => {
 
   it("does not treat BEGIN inside an identifier as a block opener", () => {
     expect(splitStatements("SELECT beginning FROM t; SELECT 2;")).toHaveLength(2);
+  });
+});
+
+describe("ftsQuery", () => {
+  it("quotes each token, prefixing only the last so results narrow as you type", () => {
+    expect(ftsQuery("ship the renderer")).toBe('"ship" "the" "renderer"*');
+  });
+
+  it("is null for input with nothing searchable in it", () => {
+    expect(ftsQuery("")).toBeNull();
+    expect(ftsQuery("   ")).toBeNull();
+    expect(ftsQuery("!!! ???")).toBeNull();
+  });
+
+  /* Every one of these is a thrown SQLite error if it reaches MATCH raw, and
+     the palette sends a partial query on every keystroke. */
+  it("defuses FTS5 operators rather than passing them through", () => {
+    expect(ftsQuery('a "quote')).toBe('"a" "quote"*');
+    expect(ftsQuery("foo(")).toBe('"foo"*');
+    expect(ftsQuery("a OR b")).toBe('"a" "or" "b"*');
+    expect(ftsQuery("a NEAR/2 b")).toBe('"a" "near" "2" "b"*');
+    expect(ftsQuery("col:value")).toBe('"col" "value"*');
+    expect(ftsQuery("-minus ^caret *star")).toBe('"minus" "caret" "star"*');
+  });
+
+  it("keeps letters and digits from any script", () => {
+    expect(ftsQuery("réunion 2026")).toBe('"réunion" "2026"*');
   });
 });

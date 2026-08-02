@@ -25,20 +25,20 @@ export default function Chat({ messages, streaming, error }: ChatProps) {
       {messages.map((message, index) =>
         message.role === "user" ? (
           <div key={index} className="flex justify-end">
-            <span className="max-w-full rounded-panel bg-elevated px-2 py-1 text-meta text-primary">
+            <span className="text-prose max-w-full rounded-panel bg-elevated px-2 py-1 text-meta text-primary">
               {message.content}
             </span>
           </div>
         ) : (
           // Assistant turns carry no bubble. SPEC 9.
-          <span key={index} className="whitespace-pre-wrap text-meta text-secondary">
+          <span key={index} className="text-prose whitespace-pre-wrap text-meta text-secondary">
             {message.content}
           </span>
         ),
       )}
 
       {streaming !== "" && (
-        <span className="whitespace-pre-wrap text-meta text-secondary">{streaming}</span>
+        <span className="text-prose whitespace-pre-wrap text-meta text-secondary">{streaming}</span>
       )}
 
       {error !== null && <span className="text-meta text-cat-deadline">{error}</span>}

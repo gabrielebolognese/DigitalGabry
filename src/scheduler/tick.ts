@@ -35,6 +35,12 @@ async function tick(tz: string): Promise<void> {
   }
 }
 
+/* The first check waits rather than firing on mount. On the first launch of a
+   day the job is due, and a VACUUM plus a full export starting while the
+   calendar is still painting is the one thing here that can be felt. Nothing
+   is lost by waiting: the window it is catching up on is the whole day. */
+const FIRST_CHECK_DELAY_MS = 5_000;
+
 export function startNightlyJobs(tz: string): () => void {
   let stopped = false;
 
@@ -46,11 +52,15 @@ export function startNightlyJobs(tz: string): () => void {
     });
   };
 
-  run();
-  const timer = window.setInterval(run, CHECK_MS);
+  let interval: number | null = null;
+  const firstCheck = window.setTimeout(() => {
+    run();
+    interval = window.setInterval(run, CHECK_MS);
+  }, FIRST_CHECK_DELAY_MS);
 
   return () => {
     stopped = true;
-    window.clearInterval(timer);
+    window.clearTimeout(firstCheck);
+    if (interval !== null) window.clearInterval(interval);
   };
 }

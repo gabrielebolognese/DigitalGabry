@@ -118,10 +118,10 @@ export default function Summary({ apiKey, contextJson, ready }: SummaryProps) {
         ? sections.map((section) => (
             <div key={section.label} className="flex flex-col gap-1">
               <span className="text-micro uppercase text-tertiary">{section.label}</span>
-              <span className="text-meta text-secondary">{section.body}</span>
+              <span className="text-prose text-meta text-secondary">{section.body}</span>
             </div>
           ))
-        : text !== "" && <span className="text-meta text-secondary">{text}</span>}
+        : text !== "" && <span className="text-prose text-meta text-secondary">{text}</span>}
     </div>
   );
 }

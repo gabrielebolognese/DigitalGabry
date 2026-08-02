@@ -407,6 +407,37 @@ body,
   --block-ink: var(--cat-deadline);
 }
 
+/* SPEC 3.3 sets line height 1.25 inside blocks and dense rows, 1.5 for chat
+   and paragraph text. The type scale carries the dense value, so prose opts in.
+   Assistant answers are the one place in the app that runs to real sentences. */
+.text-prose {
+  line-height: var(--lh-prose);
+}
+
+/* Command palette. Positioned from the top rather than centred, so the list
+   growing and shrinking under the input does not move the input itself. */
+.palette-shell {
+  width: var(--palette-w);
+  max-width: calc(100vw - var(--spacing) * 8);
+  margin-top: var(--palette-top);
+}
+
+.palette-list {
+  max-height: var(--palette-list-max-h);
+}
+
+.palette-row {
+  min-height: var(--palette-row-h);
+}
+
+/* Skeletons are flat surface blocks, deliberately still. SPEC 3.5 caps every
+   animation at 200ms, so the usual pulsing shimmer is not available, and a
+   spinner is ruled out by PLAN phase 10. */
+.skeleton {
+  background-color: var(--bg-surface);
+  border-radius: var(--radius-block);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
