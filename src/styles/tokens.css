@@ -86,12 +86,19 @@
   --icon-rail: 16px;
   --icon-stroke: 1.5;
 
-  /* Layout, SPEC 4 */
+  /* Layout, SPEC 4.
+
+     SPEC 4 and 5 quote several dimensions that are not multiples of 4, which
+     contradicts SPEC 3.4 and invariant 3. Resolved in favour of the invariant,
+     since 3.4 is restated in 13 and the layout figures read as sketched rather
+     than measured. Each is one token, so any single one is a one line revert.
+     Was: header 38, avatar 26, rail item 34x30, gutter 34, dot 5, block gap 2,
+     heat cell 9, heat gap 2. */
   --rail-w: 52px;
-  --header-h: 38px;
-  --avatar-size: 26px;
-  --rail-item-w: 34px;
-  --rail-item-h: 30px;
+  --header-h: 40px;
+  --avatar-size: 24px;
+  --rail-item-w: 32px;
+  --rail-item-h: 32px;
   --splitter-hit: 4px;
   --panel-w-default: 320px;
   --panel-w-min: 280px;
@@ -106,19 +113,27 @@
   --scrim: rgba(11, 11, 12, 0.72);
 
   /* Calendar, SPEC 5 */
-  --time-gutter-w: 34px;
+  --time-gutter-w: 32px;
   --day-header-h: 32px;
-  --now-dot: 5px;
+  --now-dot: 4px;
   --block-icon-slot: 20px;
   --block-inset: 4px;
-  --block-gap: 2px;
+  --block-gap: 4px;
   --block-min-h: 20px;
   --block-overflow-h: 16px;
 
-  /* Momentum, SPEC 8.7 */
+  /* Momentum, SPEC 8.7. The chart line stays at 1.5px: it is a stroke, which
+     SPEC 3.6 fixes at 1.5 everywhere, not a spacing value. */
   --chart-line-w: 1.5px;
-  --heat-cell: 9px;
-  --heat-gap: 2px;
+  --heat-cell: 8px;
+  --heat-gap: 4px;
+
+  /* Command palette. Not in SPEC 4's layout figures; PLAN phase 10 asks for
+     the component without giving it dimensions. */
+  --palette-w: 560px;
+  --palette-top: 88px;
+  --palette-list-max-h: 320px;
+  --palette-row-h: 32px;
 
   /* State opacities, SPEC 5.1 */
   --opacity-completed: 0.7;

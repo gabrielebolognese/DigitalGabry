@@ -66,6 +66,19 @@ import {
 } from "../../domain/time";
 import { useBlocks } from "../../store/useBlocks";
 import { ui, useUiStore } from "../../store/useUiStore";
+import { Skeleton } from "../../components/Skeleton";
+
+/* Fixed rather than random, so a slow load does not redraw a different shape
+   on every render. Heights are spacing steps, so they stay on the 4px grid. */
+const SKELETON_COLUMNS: readonly (readonly string[])[] = [
+  ["h-12", "h-8"],
+  ["h-16"],
+  ["h-8", "h-12"],
+  ["h-20"],
+  ["h-12"],
+  ["h-8", "h-16"],
+  [],
+];
 import NowLine from "./NowLine";
 import TimeGutter from "./TimeGutter";
 
@@ -268,7 +281,14 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
   const zoomAnchor = useRef<{ minutes: number; offsetY: number } | null>(null);
   const landed = useRef(false);
 
-  const { selectedEntryId, inspectorOpen, editingTitleEntryId } = useUiStore();
+  const { selectedEntryId, inspectorOpen, editingTitleEntryId, reveal } = useUiStore();
+
+  /* The palette can pick a block from any week. Reveal carries a fresh token
+     each time, so choosing the same result twice still moves the calendar. */
+  useEffect(() => {
+    if (reveal === null) return;
+    setAnchorUtc(reveal.startUtc);
+  }, [reveal]);
 
   useEffect(() => {
     const id = window.setInterval(() => setNowUtc(Date.now()), NOW_TICK_MS);
@@ -803,6 +823,22 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
       </div>
 
       <div className="relative min-h-0 flex-1">
+        {loading && (
+          <div
+            role="status"
+            aria-label="Loading the week"
+            className="pointer-events-none absolute inset-0 z-10 flex pt-4"
+          >
+            <div className="cal-gutter shrink-0" />
+            {SKELETON_COLUMNS.map((heights, columnIndex) => (
+              <div key={columnIndex} className="flex min-w-0 flex-1 flex-col gap-2 px-1">
+                {heights.map((height, rowIndex) => (
+                  <Skeleton key={rowIndex} className={`w-full ${height}`} />
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
         {weekIsEmpty && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
             <span className="text-meta text-tertiary">
@@ -810,7 +846,18 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
             </span>
           </div>
         )}
-      <div ref={scrollRef} className="cal-scroll h-full overflow-y-auto">
+      {/* One tab stop for the whole grid rather than one per block, which is
+          the usual pattern for a grid: Tab reaches the calendar, the arrow
+          keys move within it. The keys are handled on window, so they already
+          worked; without this there was simply no way to see, or to reach by
+          keyboard alone, that the calendar was listening. */}
+      <div
+        ref={scrollRef}
+        tabIndex={0}
+        role="group"
+        aria-label="Week grid"
+        className="cal-scroll h-full overflow-y-auto"
+      >
         <div
           className="flex"
           style={{ "--hour-h": `${hourHeight}px` } as CSSProperties}

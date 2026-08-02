@@ -228,15 +228,6 @@ async function hydrate(rows: BlockRow[]): Promise<Block[]> {
  * start_utc and its own occurrence row, so without it every recurring block
  * renders twice at its first instant. */
 export async function listBlocksInRange(range: UtcRange): Promise<CalendarEntry[]> {
-  if (import.meta.env.DEV) {
-    console.debug(
-      "[db] blocks in range",
-      new Date(range.start).toISOString(),
-      "to",
-      new Date(range.end).toISOString(),
-    );
-  }
-
   const plain = await query<BlockRow>(
     `SELECT ${BLOCK_COLUMNS} FROM blocks
       WHERE deleted_utc IS NULL
@@ -417,8 +408,29 @@ export async function blockAggregatesByDay(range: UtcRange): Promise<DayAggregat
   }));
 }
 
+/* FTS5 MATCH takes a query language, not a string of text. Raw input reaches
+   it full of operators: a lone `"` is an unterminated phrase, `foo(` an
+   unclosed group, `NEAR` and `OR` are keywords, and every one of them is a
+   thrown SQLite error rather than an empty result. The command palette sends a
+   partial query on every keystroke, so this has to hold for any input at all.
+
+   Reducing to letters and digits and re-quoting each token as a phrase leaves
+   nothing for the parser to trip on, and no quote left to escape. The last
+   token gets a prefix star so results narrow while the user is still typing. */
+export function ftsQuery(term: string): string | null {
+  const tokens = term.toLowerCase().match(/[\p{L}\p{N}]+/gu);
+  if (tokens === null) return null;
+
+  return tokens
+    .map((token, index) =>
+      index === tokens.length - 1 ? `"${token}"*` : `"${token}"`,
+    )
+    .join(" ");
+}
+
 export async function searchBlocks(term: string, limit = 50): Promise<Block[]> {
-  if (term.trim() === "") return [];
+  const match = ftsQuery(term);
+  if (match === null) return [];
   const rows = await query<BlockRow>(
     `SELECT ${BLOCK_COLUMNS.split(",")
       .map((column) => `b.${column.trim()}`)
@@ -430,7 +442,7 @@ export async function searchBlocks(term: string, limit = 50): Promise<Block[]> {
         AND b.is_exception <> 2
       ORDER BY rank
       LIMIT ?`,
-    [term, limit],
+    [match, limit],
   );
   return hydrate(rows);
 }

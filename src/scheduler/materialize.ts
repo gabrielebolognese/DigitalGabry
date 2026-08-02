@@ -155,12 +155,6 @@ export async function materializeAll(
   await writeOccurrences(batches, Date.now());
 
   report.elapsedMs = Date.now() - began;
-  if (import.meta.env.DEV && report.rebuilt > 0) {
-    console.debug(
-      `[recurrence] rebuilt ${report.rebuilt}, skipped ${report.skipped}, ` +
-        `${report.occurrencesWritten} occurrences in ${report.elapsedMs}ms`,
-    );
-  }
   return report;
 }
 
