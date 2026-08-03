@@ -506,8 +506,332 @@ Acceptance criteria:
 
 ---
 
-## After the first draft
+## The first draft is complete
 
-Live with it for a week before adding anything. The features most likely to be worth building next, in order: a backlog view for unscheduled blocks, GitHub commit import feeding momentum automatically, and the Tauri mobile target reusing `src/domain` unchanged.
+Phases 0 through 10 are merged. What follows extends the app rather than finishing it.
 
 Do not start device sync until you actually have a second device. The schema is ready, and readiness is the whole point.
+
+---
+
+# Part two, content and generation
+
+Phases 11 through 15 come from `Spec2.md` (content surfaces) and `Spec1.1.md` (the generation layer). Read the phase's named sections before writing anything.
+
+## Corrections to the specification texts
+
+Both documents were written before phases 6 through 10 landed, so three details in them are stale. These corrections win.
+
+1. **Migration numbers.** `001_init`, `002_recurrence` and `003_settings` already exist. `Spec2.md` says migration 002 for content: it is **004**. `Spec1.1.md` says migration 003 for generation: it is **005**.
+2. **Slot keys.** `Spec1.1.md` section 7 defines `base58(sha256(...))`. A pure synchronous engine cannot reach WebCrypto, which is async and DOM bound, and the key is local identity rather than a security boundary. Use the plain tuple `generatorId|localDate|ordinal`, with `generatorId|triggerId|offsetIndex` for the derived variant. Identity semantics are unchanged.
+3. **Three values conflict with SPEC section 3 and are resolved toward the invariant**, as the same conflict was in phase 10. The generated-origin glyph is **14px** at reduced opacity, not 10px, because SPEC 3.6 allows only 14 and 16. The status chip pads **4 by 8**, not 2 by 6. The view header stays at the `--header-h` token, now 40px, not the 38px quoted in `Spec2.md` section 1.2.
+
+## Dependencies added for part two
+
+The stack in `SPEC.md` section 2 is otherwise unchanged. Install each at the phase that first needs it, never up front.
+
+| Package | Phase | Why nothing already present will do |
+| --- | --- | --- |
+| `zod` | 11 | Around twenty generator and modifier config schemas, plus the LinkedIn spec with per-field character limits |
+| `@tauri-apps/plugin-clipboard-manager` | 12 | `writeImage`; the text clipboard is already reachable, images are not |
+| `modern-screenshot` | 13 | `domToPng` rasterisation at exactly 1080x1350 |
+
+Deliberately **not** added: no hashing package (vault import is async, so `crypto.subtle.digest` serves, and the pure engine uses no hash at all), no virtualisation library (a windowed list is about sixty lines), no cron parser (five-field syntax is small).
+
+---
+
+## Phase 11, content foundations
+
+**Prompt**
+
+```
+Read SPEC.md and Spec2.md sections 1 and 6.
+
+Implement Phase 11 only: shared content infrastructure. No platform
+specific UI.
+
+Build:
+1. Migration 004, not 002: content_items, assets, content_assets,
+   content_fts and its sync triggers, per Spec2.md section 1.4.
+2. Repository functions for content items and assets, following the same
+   patterns as blocks: filter bounded reads, deleted_utc filtering, ops
+   logging on every mutation.
+3. src/vault/vault.ts: the asset vault per section 1.5. importAsset
+   hashes with sha256 via crypto.subtle, deduplicates on the hash,
+   copies into the platform folder, reads dimensions, inserts the row.
+   Plus resolveAssetPath and a revealInOutbox helper. Never store an
+   absolute path, only one relative to the vault root.
+4. src/views/content/ContentView.tsx: the rail item, the segmented
+   platform sub-nav with count badges, persisted active tab.
+5. src/views/content/ContentGrid.tsx: the shared card grid, filter bar,
+   sort control, search against content_fts, empty state, and windowing
+   above 100 items, per section 1.6.
+6. src/components/StatusChip.tsx per section 1.3, padded 4 by 8.
+7. Add content items to the Ctrl+K palette results, reusing ftsQuery.
+8. src/content/linkToBlock.ts: scheduling an item creates a linked post
+   block; completing that block marks the item posted and logs the
+   momentum activity per section 6; reverting soft-deletes that row.
+
+The LinkedIn brand mark is not in the icon stack. Add one local SVG
+component rather than pinning an old simple-icons version.
+
+Do NOT build: any platform specific card, editor, or generation.
+
+Acceptance criteria:
+- Importing the same image twice creates exactly one assets row.
+- The grid renders 500 seeded items without dropping frames.
+- Search returns results from both blocks and content items.
+- Scheduling and completing an item produces exactly one activity_log
+  row, and reverting removes it.
+```
+
+---
+
+## Phases 11.5A1 through 11.5D, the generation layer
+
+Sits between Phase 11 and Phase 12, per `Spec1.1.md` section 17. Phase 11.5A is split in two, because as written it is larger than any phase so far and will not fit one branch and one context.
+
+### Phase 11.5A1, engine skeleton
+
+```
+Read Spec1.1.md sections 2, 3, 6, 7, 9, and 16.
+
+Implement Phase 11.5A1 only: the pure engine skeleton. No UI, no SQL,
+no generator kinds beyond the three named here.
+
+Build in src/domain/generation/:
+1. types.ts: Generator, SlotIntent, Slot, WorldState, TraceEntry.
+2. registry.ts: kind to module mapping. Adding a kind must require
+   exactly one new file and one registry line.
+3. prng.ts: seeded deterministic PRNG keyed by
+   hash(seed, generatorId, localDate, ordinal).
+4. slotKey.ts: the plain tuple identity, per the correction above.
+5. tz.ts: wall clock to UTC with the nonexistent and ambiguous time
+   policies from section 9. Delegate to domain/time.ts; do not add a
+   second timezone authority.
+6. engine.ts: the ten-stage pipeline from section 6, in exactly that
+   order, with trace collection behind a dev flag.
+7. kinds/: weekly-grid, daily-times, manual-set only.
+
+Nothing in this directory may import React, the DOM, Tauri, or SQL.
+
+Acceptance criteria:
+- Generating the same window twice returns byte-identical output,
+  including trace order. This test exists before the fourth kind does.
+- Both Europe/Rome DST transitions pass in both directions, for all
+  three nonexistent-time policies and all three ambiguous-time policies.
+- Edge cases 1, 2, 3, 15, 21 and 22 from section 16 pass.
+- A benchmark test is committed, not just run.
+```
+
+### Phase 11.5A2, remaining core kinds and all modifiers
+
+```
+Read Spec1.1.md sections 4, 5, and 16.
+
+Implement Phase 11.5A2 only.
+
+Build:
+1. kinds/: interval, spread, quota, rrule. Reuse domain/recurrence.ts
+   for the rrule kind; it is the only file allowed to import rrule.
+2. modifiers/: blackout, capacity, spacing, jitter, snap, collision.
+
+Acceptance criteria:
+- Edge cases 4, 5, 6, 17, 18 and 20 pass.
+- Jitter with a fixed seed is identical across restarts.
+- Generating 90 days with 20 generators completes under 40ms.
+```
+
+### Phase 11.5B, persistence and the remaining kinds
+
+```
+Read Spec1.1.md sections 4, 8, 10, and 11.
+
+Implement Phase 11.5B only.
+
+Build:
+1. Migration 005, not 003: rulesets, generators, slot_overrides,
+   slot_bindings per section 10.
+2. Version-aware generator loading, selecting the correct version per
+   generated date.
+3. Version-on-edit per section 8, three save modes, versions never
+   overlapping.
+4. Rekey migration per section 7, with a reported mapping and undo.
+5. The remaining kinds: rotation, pattern, relative, derived,
+   deadline-backfill, gap-fill, batch-production, conditional, cron.
+   Hand-roll the cron parser.
+6. Circular derivation detection at save time.
+7. Garbage collection of orphaned overrides after 90 days.
+8. Memoization keyed on ruleset version, window, and world state hash.
+
+Acceptance criteria:
+- August 14 renders with v1 and August 16 with v2 of an edited generator.
+- Edge cases 7, 8, 9, 10, 16, 24 and 25 pass.
+- A ruleset round-trips through export and import with identical output.
+```
+
+### Phase 11.5C, calendar rendering and editors
+
+```
+Read Spec1.1.md sections 12 and 16.
+
+Implement Phase 11.5C only.
+
+Start with the read path, before any new component. Slots are computed
+and never stored, so WeekView stops having one source of truth: it must
+merge database entries with engine output, and domain/layout.ts must
+place both without letting a ghost slot displace a real block. Do this
+as its own commit first.
+
+Then build:
+1. Ghost slot rendering per 12.1, and the 14px generated-origin glyph.
+2. The layers popover per 12.2, display only.
+3. The explainer popover per 12.3, reading the trace.
+4. The weekly grid editor per 12.4.
+5. The rule list with describe() output and drag-to-reorder layers.
+6. The live preview strip, updating on keystroke with no save.
+7. The impact dialog on save.
+8. Slot interactions: assign, skip once, skip all future, pin, move,
+   reset to rule.
+
+Acceptance criteria:
+- Preview repaints under 16ms per keystroke.
+- Hiding all slots restores a pure manual calendar instantly.
+- A moved slot survives a rule edit unchanged, per edge case 11.
+- The explainer lists every stage that touched the slot.
+```
+
+### Phase 11.5D, assignment and reporting
+
+```
+Read Spec1.1.md sections 13 and 14.
+
+Implement Phase 11.5D only.
+
+Build:
+1. Drag a content card onto a slot, platform matched.
+2. The slot picker on click.
+3. autoFill per section 13, always dry-run first, applied or rejected
+   as one transaction.
+4. The capacity and starvation report, with sparklines.
+5. Ruleset export and import, refusing unknown kinds by name.
+6. The five bundled presets, seeded and disabled.
+7. Binding materializes a block carrying payload.generatedBy.
+
+Acceptance criteria:
+- Auto-fill over 30 days is a single undoable transaction.
+- The starvation report matches a manual count on seeded data.
+- Deleting a materialized block returns the slot to virtual and removes
+  the binding, without regenerating the block.
+```
+
+---
+
+## Phase 12, X posts
+
+**Prompt**
+
+```
+Read Spec2.md section 2.
+
+Implement Phase 12 only: the X tab.
+
+Build:
+1. XCard per section 2.2, including the 16:9 image area, three-line text
+   clamp, and the color-staged character counter.
+2. The inspector editor per section 2.3, with drag-and-drop, clipboard
+   paste, and file picker image import through the vault.
+3. The "post this" flow per section 2.4, in the exact order specified:
+   copy text, stage to outbox with a readable filename, reveal in the
+   file manager, open the composer, toast with a "Copy image instead"
+   action that writes the image to the clipboard.
+4. Outbox cleanup of files older than 24 hours on each run.
+5. Mark posted, manually and via the delayed toast prompt, wired to the
+   momentum logging from Phase 11.
+6. Settings: outbox folder picker with an OS Pictures preset, and the
+   soft character limit, default 150.
+
+Do not attempt to post via the X API.
+
+Acceptance criteria:
+- Pasting an image with Ctrl+V in the editor imports it to the vault.
+- "Post this" completes all five steps with a single click.
+- The hard 280 limit cannot be exceeded; the soft limit only changes the
+  counter color.
+- Marking posted logs exactly one X post activity.
+```
+
+---
+
+## Phase 13, LinkedIn generation pipeline
+
+Use plan mode. Build the pipeline and validate it before any template polish.
+
+**Prompt**
+
+```
+Read Spec2.md section 3 in full.
+
+Implement Phase 13 only: LinkedIn posts and image generation, in the
+order A through H given in Spec2.md section 7.
+
+brand.css carries the only literal colors in the app outside tokens.css.
+Add its glob to the invariant sweep in CLAUDE.md in the same commit that
+creates it, and keep it confined to the templates folder.
+
+Acceptance criteria:
+- A generated PNG is exactly 1080x1350 pixels.
+- Fonts render correctly in the capture, never a fallback face.
+- A deliberately malformed model response is caught, retried once, then
+  surfaced for repair without a crash.
+- Editing a spec field re-renders the preview with no network call.
+- The payload stores the JSON, prompt hash and template id, so the same
+  image can be reproduced.
+- No FlashFX brand color appears anywhere outside the templates folder.
+```
+
+---
+
+## Phase 14, Instagram video manager
+
+**Prompt**
+
+```
+Read Spec2.md section 4.
+
+Implement Phase 14 only: the Instagram tab, including the three-column
+full-width editor that replaces the inspector overlay for this platform
+only.
+
+Acceptance criteria:
+- A 12 section script stays responsive while typing.
+- Reordering sections preserves per-section duration overrides.
+- A failed reference metadata fetch still adds the reference with the
+  URL and note intact.
+- The duration total matches the sum of sections exactly, including
+  overrides.
+```
+
+---
+
+## Phase 15, YouTube shell
+
+**Prompt**
+
+```
+Read Spec2.md section 5.
+
+Implement Phase 15 only. This phase is deliberately minimal. Implement
+exactly the seven items listed in Spec2.md section 5 and nothing more.
+
+Do NOT add chapters, thumbnail generation, SEO fields, retention
+planning, description templates, or any other YouTube specific
+structure. The specification is deferred, and inventing structure now
+guarantees rework.
+
+Acceptance criteria:
+- The tab is selectable and lists items with platform = 'youtube'.
+- Creating, editing, scheduling and searching work through the shared
+  components with zero YouTube specific code paths.
+- YouTubePayload is an empty type with the explanatory comment.
+```

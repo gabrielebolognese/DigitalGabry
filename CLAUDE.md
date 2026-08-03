@@ -4,7 +4,11 @@ A local-first desktop calendar and momentum tracker. Tauri v2, React, TypeScript
 
 `SPEC.md` is the contract. `PLAN.md` is the phase sequence. Read both before writing code. If something is not defined in `SPEC.md`, stop and ask rather than inventing it.
 
-**All ten phases are merged.** The first draft is complete. Per `PLAN.md`, live with it for a week before adding anything; the next candidates in order are a backlog view for unscheduled blocks, GitHub commit import feeding momentum, and the Tauri mobile target reusing `src/domain` unchanged. Device sync waits for a second device.
+Part two extends the app: `Spec2.md` covers content surfaces, `Spec1.1.md` the generation layer. Where documents conflict, `SPEC.md` wins on tokens and invariants, `Spec1.1.md` wins on scheduling semantics. `PLAN.md` records three corrections where those two documents went stale, and those corrections win over the spec text.
+
+**Current phase: 11, content foundations.** Phases 0 through 10 are merged. Update this line when a phase merges. One branch per phase named `phase-NN-slug`, one commit, and a cleared context before the next one.
+
+**Migration numbers.** `001_init`, `002_recurrence`, `003_settings` exist. Content is **004**, generation is **005**. Both spec texts name numbers that are already taken.
 
 ## Commands
 
@@ -23,7 +27,7 @@ npx vitest                                   # watch mode
 
 - Implement only the current phase from `PLAN.md`. Never build ahead.
 - Prefer editing existing files over creating new ones.
-- No new dependency without asking first. The stack in `SPEC.md` section 2 is fixed.
+- No new dependency without asking first. The stack in `SPEC.md` section 2 is fixed. Part two adds exactly three, listed in `PLAN.md`, each installed at the phase that first needs it: `zod` (11), `@tauri-apps/plugin-clipboard-manager` (12), `modern-screenshot` (13). Nothing else.
 - No comments explaining what code does. Comments only for why a non-obvious decision was made.
 - Strict TypeScript. No `any`, no `@ts-ignore`, no non-null assertions without a comment justifying them.
 - When a value is not specified in `SPEC.md`, that is a spec gap. Say so, propose a value, and wait.
@@ -72,14 +76,42 @@ domain/   pure. Imported by everything, imports nothing from the app.
 9. `momentum_daily` is a cache. It must always be reproducible from `activity_log` by a pure function.
 10. The app must work fully offline, and must work with no API key configured.
 
+## Part two invariants
+
+From `Spec2.md` section 8 and `Spec1.1.md` section 18. They extend `SPEC.md` section 13; none of the originals are relaxed.
+
+**Content, phases 11 to 15**
+
+11. Images are never stored in SQLite. They live in the vault, addressed by sha256, referenced by a path relative to the vault root. Absolute paths are never persisted.
+12. The FlashFX brand palette exists only inside `src/views/content/linkedin/templates/` via `brand.css`. The DigitalGabry tokens never appear in a template, and the brand palette never appears in the app interface.
+13. Every model response is validated against a schema before use. A parse or validation failure is surfaced with the raw output, never swallowed and never silently defaulted.
+14. Generated assets store the inputs that produced them, so any image is reproducible.
+15. Content items and calendar blocks link, they do not duplicate. Publish state lives on the item, committed time on the block.
+16. Momentum is logged exactly once per publication. Auto-logged rows are visibly marked so they cannot be double counted.
+
+**Generation, phases 11.5A1 to 11.5D**
+
+17. Generation is pure. No `Date.now()`, no `Math.random()`, no locale-dependent formatting inside `src/domain/generation/`. The current time arrives in `worldState`.
+18. Slots are computed, never stored. Only overrides and bindings persist.
+19. A generator may never modify or delete a user-created block. `replace` applies to generated slots only.
+20. Human decisions outrank rules. Overrides apply after constraints, and bound or pinned slots are immune to transformation.
+21. Rules are versioned. Editing a schedule never rewrites the past unless explicitly confirmed.
+22. Every materialized block records its origin in `payload.generatedBy`.
+23. Adding a generator kind requires one new file and one registry line, with no change to the pipeline.
+24. No schedule change is saved without an impact preview when it affects filled or overridden slots.
+
 ## Self-check before saying a phase is done
 
 ```bash
-rg -n '#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(' src --glob '!**/tokens.css'  # must be empty
+# brand.css is excluded from phase 13 onward, and only then. It is the one other
+# file allowed a literal color, and Spec2 invariant 16 confines it to templates/.
+rg -n '#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(' src --glob '!**/tokens.css' --glob '!**/brand.css'  # must be empty
 rg -n 'box-shadow' src --glob '!**/tokens.css' --glob '!**/global.css'   # must be empty
 rg -n 'font-weight:\s*[67]00|font-(semibold|bold)' src                   # must be empty
 rg -ni 'select .*from|insert into|update .*set |delete from' src --glob '!src/db/**'  # must be empty
 rg -n "from 'react'" src/domain                                          # must be empty
+rg -n 'Date\.now\(|Math\.random\(' src/domain/generation                 # must be empty
+rg -rn 'brand\.css' src --glob '!src/views/content/linkedin/templates/**' # must be empty
 npx tsc --noEmit                                                         # must pass
 npx vitest run                                                           # must pass
 ```
