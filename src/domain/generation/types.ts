@@ -28,6 +28,25 @@ export type GeneratorKind =
 
 export type ModifierStage = "transform" | "filter" | "constrain" | "resolve";
 
+export type ModifierKind =
+  | "blackout"
+  | "capacity"
+  | "spacing"
+  | "jitter"
+  | "snap"
+  | "collision";
+
+/* Which slots a modifier touches. An empty scope means all of them, which is
+   the common case and the one that must not need a field. */
+export type Scope = {
+  platforms?: readonly Platform[];
+  kinds?: readonly BlockKind[];
+  categories?: readonly BlockCategory[];
+  generatorIds?: readonly string[];
+};
+
+export type Period = "day" | "week" | "month";
+
 /* Spec1.1 section 9. A generator carries its own policy, because a rule at
    02:30 has three defensible behaviours and the right one depends on what the
    rule is for. */
@@ -165,10 +184,55 @@ export type SlotBinding = {
   blockId?: string | null;
 };
 
+/* Modifiers do not emit slots; they transform, filter or constrain the emitted
+   set. Spec1.1 section 10 stores them in the same table as generators with a
+   role column, which the persistence layer in 11.5B splits on load. */
+export type Modifier = {
+  id: string;
+  version: number;
+  name: string;
+  kind: ModifierKind;
+  enabled: boolean;
+  /* Orders modifiers within a stage, so two spacing rules always run the same
+     way round. Not the same thing as a generator's layer. */
+  order: number;
+  validFrom: number | null;
+  validTo: number | null;
+  timezone: string;
+  config: unknown;
+};
+
 export type ResolvedRuleset = {
   id: string;
   name: string;
   generators: readonly Generator[];
+  modifiers?: readonly Modifier[];
+};
+
+/* A slot the pipeline removed, and why. Spec1.1 5.3 and edge cases 5, 6 and 17
+   all require the reason to reach the preview rather than the slot quietly
+   disappearing: a schedule that silently drops what you asked for is worse
+   than one that refuses. */
+export type Drop = {
+  key: string;
+  generatorId: string;
+  startUtc: number;
+  stage: string;
+  reason: string;
+};
+
+/* Something the pipeline could not do, reported without a slot to hang it on:
+   a capacity already exceeded by bound slots, a quota with nowhere to place. */
+export type Notice = {
+  sourceId: string;
+  kind: string;
+  message: string;
+};
+
+export type GenerationReport = {
+  slots: Slot[];
+  dropped: Drop[];
+  notices: Notice[];
 };
 
 export type GenerateOptions = {

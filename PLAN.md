@@ -637,10 +637,13 @@ Build:
 2. modifiers/: blackout, capacity, spacing, jitter, snap, collision.
 
 Acceptance criteria:
-- Edge cases 4, 5, 6, 17, 18 and 20 pass.
+- Edge cases 4, 5, 6, 17 and 20 pass.
 - Jitter with a fixed seed is identical across restarts.
 - Generating 90 days with 20 generators completes under 40ms.
 ```
+
+Edge case 18 was listed here in error: it constrains `gap-fill`, which is built
+in 11.5B. It is asserted there instead.
 
 ### Phase 11.5B, persistence and the remaining kinds
 

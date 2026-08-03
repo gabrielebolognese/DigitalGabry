@@ -6,9 +6,12 @@ import type { Generator, ResolvedRuleset, SlotIntent } from "./types";
    the budget is what decides whether generation can stay on the main thread,
    and a regression in it is invisible until the calendar feels slow.
 
-   Best of five. A single timing on a shared machine is noise; the best run is
-   the one least disturbed by whatever else the box was doing, which is the
-   honest measure of the code rather than of the scheduler. */
+   Best of N, with N larger for the smaller windows. A single timing measures
+   the machine as much as the code: this file runs alongside the rest of the
+   suite, and the seven day case reported 61ms under that contention while
+   measuring 2.9ms with the box to itself. The best run is the one least
+   disturbed, and taking more samples of a cheap operation costs almost
+   nothing while making the reading trustworthy. */
 
 const TZ = "Europe/Rome";
 const DAY_MS = 86_400_000;
@@ -82,12 +85,15 @@ const RULES: ResolvedRuleset = {
 
 const START = Date.parse("2026-01-05T00:00:00Z");
 
-function bestOfFive(days: number): { ms: number; slots: number } {
+function bestOf(days: number, samples: number): { ms: number; slots: number } {
   const window = { startUtc: START, endUtc: START + days * DAY_MS };
   let best = Infinity;
   let slots = 0;
 
-  for (let run = 0; run < 5; run += 1) {
+  // Warm up, so the first sample measures the code and not the compiler.
+  for (let run = 0; run < 3; run += 1) generate(RULES, window);
+
+  for (let run = 0; run < samples; run += 1) {
     const began = performance.now();
     const produced = generate(RULES, window);
     const elapsed = performance.now() - began;
@@ -100,19 +106,19 @@ function bestOfFive(days: number): { ms: number; slots: number } {
 
 describe("generation performance, Spec1.1 section 15", () => {
   it("7 days with 20 generators stays under 4ms", () => {
-    const { ms, slots } = bestOfFive(7);
+    const { ms, slots } = bestOf(7, 25);
     expect(slots).toBeGreaterThan(100);
     expect(ms).toBeLessThan(4);
   });
 
   it("90 days with 20 generators stays under 40ms", () => {
-    const { ms, slots } = bestOfFive(90);
+    const { ms, slots } = bestOf(90, 9);
     expect(slots).toBeGreaterThan(2000);
     expect(ms).toBeLessThan(40);
   });
 
   it("365 days with 20 generators stays under 200ms", () => {
-    const { ms, slots } = bestOfFive(365);
+    const { ms, slots } = bestOf(365, 5);
     expect(slots).toBeGreaterThan(9000);
     expect(ms).toBeLessThan(200);
   });
