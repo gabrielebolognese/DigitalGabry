@@ -12,6 +12,7 @@ import {
 } from "../../domain/content";
 import type { Project } from "../../db/repository";
 import type { ContentApi } from "../../store/useContent";
+import XCard from "./x/XCard";
 
 /* Spec2 1.6. One grid shell for all four platforms; they differ in the card
    body, which arrives in phases 12 to 15, not in the shell around it. */
@@ -31,6 +32,13 @@ type ContentGridProps = {
   platform: ContentPlatform;
   projects: readonly Project[];
   onOpen: (item: ContentItem) => void;
+  /* Phase 12 gives X its own card. The other three keep the shared one until
+     their phases land, which is what makes the grid a shell rather than a
+     component with four modes. */
+  imageUrlFor?: (item: ContentItem) => string | null;
+  softLimitDefault?: number;
+  onCopy?: (item: ContentItem) => void;
+  onPostThis?: (item: ContentItem) => void;
 };
 
 function relativeTime(fromUtc: number, nowUtc: number): string {
@@ -81,6 +89,10 @@ export default function ContentGrid({
   platform,
   projects,
   onOpen,
+  imageUrlFor,
+  softLimitDefault = 150,
+  onCopy,
+  onPostThis,
 }: ContentGridProps) {
   const [nowUtc] = useState(() => Date.now());
   const available = useMemo(() => statusesFor(platform), [platform]);
@@ -156,9 +168,21 @@ export default function ContentGrid({
           </span>
         ) : (
           <div className="content-grid">
-            {items.map((item) => (
-              <Card key={item.id} item={item} nowUtc={nowUtc} onOpen={onOpen} />
-            ))}
+            {items.map((item) =>
+              item.platform === "x" && onCopy !== undefined && onPostThis !== undefined ? (
+                <XCard
+                  key={item.id}
+                  item={item}
+                  imageUrl={imageUrlFor?.(item) ?? null}
+                  softLimitDefault={softLimitDefault}
+                  onOpen={onOpen}
+                  onCopy={onCopy}
+                  onPostThis={onPostThis}
+                />
+              ) : (
+                <Card key={item.id} item={item} nowUtc={nowUtc} onOpen={onOpen} />
+              ),
+            )}
           </div>
         )}
       </div>

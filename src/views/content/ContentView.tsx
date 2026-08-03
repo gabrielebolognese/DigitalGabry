@@ -11,6 +11,17 @@ import { listProjects, type Project } from "../../db/repository";
 import { useContent } from "../../store/useContent";
 import { useUiStore } from "../../store/useUiStore";
 import ContentGrid from "./ContentGrid";
+import XEditor from "./x/XEditor";
+import Toast from "../../components/Toast";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { copyImageInstead, postThis } from "../../content/postThis";
+import { markPosted } from "../../content/linkToBlock";
+import { assetsForContent } from "../../db/repository";
+import { resolveAssetUrl } from "../../vault/vault";
+import { DEFAULT_SOFT_LIMIT } from "../../domain/xPost";
+import { readBackupSettings } from "../../backup/run";
+import type { Asset } from "../../domain/content";
+import { DEFAULT_TZ } from "../../domain/time";
 
 /* Spec2 1.2. One rail item with sub-tabs rather than four rail items, which
    would dilute the rail and break the density rule in SPEC 3.6. */
@@ -50,9 +61,71 @@ export default function ContentView() {
     void api.createItem(platform);
   }, [api, platform]);
 
-  /* Phase 11 builds no platform editor, so opening a card has nowhere to go
-     yet. Phases 12 to 15 replace this. */
-  const open = useCallback((_item: ContentItem) => undefined, []);
+  const [editing, setEditing] = useState<ContentItem | null>(null);
+  const [toast, setToast] = useState<{ message: string; asset: Asset | null } | null>(
+    null,
+  );
+  const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map());
+  const [softLimit, setSoftLimit] = useState(DEFAULT_SOFT_LIMIT);
+
+  useEffect(() => {
+    void readBackupSettings().then((settings) => {
+      const stored = (settings as { xSoftLimit?: number }).xSoftLimit;
+      if (typeof stored === "number" && stored > 0) setSoftLimit(stored);
+    });
+  }, []);
+
+  /* Thumbnails resolve asynchronously, so the grid gets them as a map rather
+     than each card reaching for the disk on its own. */
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const pairs = await Promise.all(
+        api.items.map(async (item) => {
+          const linked = await assetsForContent(item.id);
+          const primary = linked.find((entry) => entry.role === "primary");
+          return primary === undefined
+            ? null
+            : ([item.id, await resolveAssetUrl(primary)] as const);
+        }),
+      );
+      if (cancelled) return;
+      setThumbnails(new Map(pairs.filter((pair): pair is [string, string] => pair !== null)));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api.items]);
+
+  const open = useCallback((item: ContentItem) => setEditing(item), []);
+
+  const primaryAssetOf = useCallback(async (item: ContentItem) => {
+    const linked = await assetsForContent(item.id);
+    return linked.find((entry) => entry.role === "primary") ?? null;
+  }, []);
+
+  const runPostThis = useCallback(
+    async (item: ContentItem) => {
+      const asset = await primaryAssetOf(item);
+      const result = await postThis({ item, asset, nowUtc: Date.now(), tz: DEFAULT_TZ });
+
+      setToast({
+        message: result.imageStaged
+          ? "Text copied, image ready in outbox"
+          : "Text copied",
+        asset,
+      });
+
+      /* Spec2 2.5: a prompt to mark it posted, a minute later, when the
+         posting has actually had time to happen. */
+      window.setTimeout(() => {
+        setToast({ message: "Did that go out? Mark it posted", asset: null });
+      }, 60_000);
+    },
+    [primaryAssetOf],
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -108,7 +181,47 @@ export default function ContentView() {
         platform={platform}
         projects={projects}
         onOpen={open}
+        imageUrlFor={(item) => thumbnails.get(item.id) ?? null}
+        softLimitDefault={softLimit}
+        onCopy={(item) => {
+          void writeText(item.body === "" ? item.title : item.body);
+          setToast({ message: "Text copied", asset: null });
+        }}
+        onPostThis={(item) => void runPostThis(item)}
       />
+
+      {editing !== null && (
+        <XEditor
+          item={editing}
+          softLimitDefault={softLimit}
+          onPatch={async (patch) => {
+            await api.patchItem(editing.id, patch);
+            setEditing({ ...editing, ...patch });
+          }}
+          onClose={() => setEditing(null)}
+        />
+      )}
+
+      {toast !== null && (
+        <Toast
+          message={toast.message}
+          action={{
+            /* Both paths have to exist: the clipboard cannot usefully serve
+               text and an image to the same paste, so taking the image means
+               giving up the text and the choice is the user's. Spec2 2.4. */
+            label: toast.asset === null ? "Mark posted" : "Copy image instead",
+            onAct: () => {
+              if (toast.asset !== null) {
+                void copyImageInstead(toast.asset);
+              } else if (editing !== null) {
+                void markPosted(editing.id, { nowUtc: Date.now() }).then(api.refresh);
+              }
+              setToast(null);
+            },
+          }}
+          onDismiss={() => setToast(null)}
+        />
+      )}
     </div>
   );
 }

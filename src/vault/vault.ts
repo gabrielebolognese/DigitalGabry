@@ -27,7 +27,17 @@ export async function vaultRoot(): Promise<string> {
   return cachedRoot;
 }
 
+/* Configurable, because the natural place to stage a file for dragging is
+   wherever the user's file manager already opens. Spec2 2.4 offers a Pictures
+   preset for exactly that reason. Falls back to the vault. */
 export async function outboxDir(): Promise<string> {
+  try {
+    const { readBackupSettings } = await import("../backup/run");
+    const configured = (await readBackupSettings()).outboxDir;
+    if (typeof configured === "string" && configured !== "") return configured;
+  } catch {
+    // Settings not readable yet; the vault default is always valid.
+  }
   return joinPath(await vaultRoot(), OUTBOX_FOLDER);
 }
 

@@ -133,7 +133,8 @@
   --preview-bar-step: 4px;
   --preview-bar-base: 4px;
 
-  /* Content surfaces, Spec2 1.6. */
+  /* Content surfaces, Spec2 1.6 and 2.2. */
+  --x-card-aspect: 16 / 9;
   --content-card-min: 260px;
   --content-card-h: 132px;
   --content-grid-gap: 12px;
