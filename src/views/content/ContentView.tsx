@@ -13,6 +13,9 @@ import { useUiStore } from "../../store/useUiStore";
 import ContentGrid from "./ContentGrid";
 import XEditor from "./x/XEditor";
 import LinkedInEditor from "./linkedin/LinkedInEditor";
+import InstagramEditor from "./instagram/InstagramEditor";
+import { sendToPhone } from "../../content/postThis";
+import { formatScriptForFilming } from "../../domain/instagram";
 import Toast from "../../components/Toast";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { copyImageInstead, postThis } from "../../content/postThis";
@@ -127,6 +130,29 @@ export default function ContentView() {
     },
     [primaryAssetOf],
   );
+
+  /* Spec2 4.3: the editor replaces the grid for this platform only, rather
+     than sitting over it as an overlay, because a script needs the width. */
+  if (editing !== null && editing.platform === "instagram") {
+    return (
+      <InstagramEditor
+        item={editing}
+        onPatch={async (patch) => {
+          await api.patchItem(editing.id, patch);
+          setEditing({ ...editing, ...patch });
+        }}
+        onSendToPhone={(payload) => {
+          void sendToPhone(
+            editing,
+            formatScriptForFilming(payload, editing.title),
+            Date.now(),
+            DEFAULT_TZ,
+          ).then(() => setToast({ message: "Script copied and staged", asset: null }));
+        }}
+        onClose={() => setEditing(null)}
+      />
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">

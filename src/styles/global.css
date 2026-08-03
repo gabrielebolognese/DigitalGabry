@@ -465,6 +465,27 @@ body,
   width: 100%;
 }
 
+.ig-left {
+  width: var(--ig-left-w);
+}
+
+.ig-right {
+  width: var(--ig-right-w);
+}
+
+.ig-gutter {
+  width: var(--ig-gutter-w);
+}
+
+.ig-seconds {
+  width: var(--ig-seconds-w);
+}
+
+.ig-thumb {
+  width: var(--ig-thumb);
+  height: var(--ig-thumb);
+}
+
 .li-card-image {
   aspect-ratio: var(--li-card-aspect);
   width: 100%;
