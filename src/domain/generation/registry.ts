@@ -23,6 +23,13 @@ export type EmitContext = {
   resolve: TzResolver;
   world: WorldState;
   window: GenerationWindow;
+  /* A kind that cannot place what it was asked for says so rather than
+     returning an empty array and leaving the user to guess. Edge case 17. */
+  notice: (kind: string, message: string) => void;
+  /* Local midnight, memoised for the pass. Kinds that reason about a whole day
+     need it and must not open a second conversion path to get it. */
+  midnightUtc: (localDate: string) => number;
+  localDateOf: (utcMs: number) => string;
 };
 
 export type KindModule<Config> = {
