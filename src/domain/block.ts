@@ -29,6 +29,11 @@ export type BlockPayload = {
   reminderMinutes?: number;
   splitFromId?: string;
   splitAtUtc?: number;
+  /* Phase 11. Set when a block was created by scheduling a content item, so
+     completing it logs against the type Spec2 section 6 names rather than the
+     platform heuristic, which cannot tell an Instagram reel from a story. */
+  activityTypeName?: string;
+  contentItemId?: string;
 };
 
 /* 0 none, 1 override, 2 cancellation on the is_exception column. A cancelled

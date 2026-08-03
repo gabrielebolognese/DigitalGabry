@@ -430,6 +430,23 @@ body,
   min-height: var(--palette-row-h);
 }
 
+/* Content grid, Spec2 1.6. */
+.content-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--content-card-min), 1fr));
+  gap: var(--content-grid-gap);
+}
+
+/* Windowing without a virtualisation package and without scroll bookkeeping.
+   The browser skips layout and paint for cards outside the viewport, and
+   contain-intrinsic-size keeps the scrollbar honest while they are skipped.
+   A hand-written windower would have had to derive the column count from the
+   container width to index into an auto-fill grid at all. */
+.content-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto var(--content-card-h);
+}
+
 /* Skeletons are flat surface blocks, deliberately still. SPEC 3.5 caps every
    animation at 200ms, so the usual pulsing shimmer is not available, and a
    spinner is ruled out by PLAN phase 10. */

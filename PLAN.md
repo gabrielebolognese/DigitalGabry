@@ -532,7 +532,7 @@ The stack in `SPEC.md` section 2 is otherwise unchanged. Install each at the pha
 
 | Package | Phase | Why nothing already present will do |
 | --- | --- | --- |
-| `zod` | 11 | Around twenty generator and modifier config schemas, plus the LinkedIn spec with per-field character limits |
+| `zod` | 11.5A1 | Around twenty generator and modifier config schemas, plus the LinkedIn spec with per-field character limits. Not phase 11: content payloads are parsed defensively and validate nothing |
 | `@tauri-apps/plugin-clipboard-manager` | 12 | `writeImage`; the text clipboard is already reachable, images are not |
 | `modern-screenshot` | 13 | `domToPng` rasterisation at exactly 1080x1350 |
 

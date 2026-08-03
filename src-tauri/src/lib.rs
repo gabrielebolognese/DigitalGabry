@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::{Manager, WindowEvent};
 
-/* SPEC 2 asks for custom Rust near zero, and these five commands are the
-   exception. Backups and export write to folders the user picks, which the fs
-   plugin's scope model makes awkward, and committing the export needs a git
-   process that no plugin in SPEC 2's list provides. */
+/* SPEC 2 asks for custom Rust near zero, and these commands are the exception.
+   Backups and export write to folders the user picks, which the fs plugin's
+   scope model makes awkward, and committing the export needs a git process
+   that no plugin in SPEC 2's list provides. Phase 11 adds three more for the
+   asset vault, which writes image bytes rather than text. */
 
 fn to_message(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -26,6 +27,50 @@ fn write_text_file(dir: String, name: String, contents: String) -> Result<(), St
 #[tauri::command]
 fn read_text_file(path: String) -> Result<String, String> {
     fs::read_to_string(&path).map_err(to_message)
+}
+
+/// Writes an asset into the vault. Separate from `write_text_file` because
+/// image bytes are not a String, and round-tripping them through one would
+/// corrupt anything that is not valid UTF-8.
+#[tauri::command]
+fn write_binary_file(dir: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
+    fs::create_dir_all(&dir).map_err(to_message)?;
+    fs::write(Path::new(&dir).join(name), bytes).map_err(to_message)
+}
+
+/// True when the path already exists, so an import that deduplicates on hash
+/// can skip the copy without reading the file back.
+#[tauri::command]
+fn path_exists(path: String) -> bool {
+    Path::new(&path).exists()
+}
+
+/// Deletes files older than `max_age_ms` from a directory, non-recursively.
+/// Used to keep the outbox from growing without bound.
+#[tauri::command]
+fn prune_older_than(dir: String, max_age_ms: u64) -> Result<usize, String> {
+    let path = PathBuf::from(&dir);
+    if !path.exists() {
+        return Ok(0);
+    }
+
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_millis(max_age_ms))
+        .ok_or_else(|| "Age is further back than the system clock reaches".to_string())?;
+
+    let mut removed = 0;
+    for entry in fs::read_dir(&path).map_err(to_message)? {
+        let entry = entry.map_err(to_message)?;
+        if !entry.file_type().map_err(to_message)?.is_file() {
+            continue;
+        }
+        let modified = entry.metadata().map_err(to_message)?.modified().map_err(to_message)?;
+        if modified < cutoff {
+            fs::remove_file(entry.path()).map_err(to_message)?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 /// Deletes the oldest snapshots beyond `keep`. Names are dated and sort
@@ -149,7 +194,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ensure_dir,
             write_text_file,
+            write_binary_file,
             read_text_file,
+            path_exists,
+            prune_older_than,
             prune_snapshots,
             git_commit_export
         ]);
