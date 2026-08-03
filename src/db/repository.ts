@@ -28,6 +28,15 @@ import {
   type MomentumDay,
 } from "../domain/momentum";
 import { localDateOf, type UtcRange } from "../domain/time";
+import {
+  CONTENT_PLATFORMS,
+  CONTENT_STATUSES,
+  type Asset,
+  type AssetRole,
+  type ContentFilter,
+  type ContentItem,
+  type ContentPlatform,
+} from "../domain/content";
 import { execute, query, transaction, type SqlValue, type Step } from "./client";
 import {
   applyBatch,
@@ -597,15 +606,16 @@ export async function insertActivity(entry: {
   count?: number;
   source?: string;
   blockId?: string | null;
+  note?: string | null;
 }): Promise<string> {
   const id = uuidv7();
   const now = Date.now();
 
   await applyInsert("activity_log", id, {
     sql: `INSERT INTO activity_log
-            (id, activity_type_id, local_date, count, source, block_id,
+            (id, activity_type_id, local_date, count, source, block_id, note,
              created_utc, updated_utc, hlc, device_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     params: [
       id,
       entry.activityTypeId,
@@ -613,6 +623,7 @@ export async function insertActivity(entry: {
       entry.count ?? 1,
       entry.source ?? "manual",
       entry.blockId ?? null,
+      entry.note ?? null,
       now,
       now,
       "",
@@ -673,7 +684,15 @@ export async function syncBlockActivity(
 
   if (existing.length > 0) return false;
 
-  const type = activityTypeForPlatform(await listActivityTypes(), platform);
+  /* An exact name set at scheduling time wins over the platform heuristic,
+     which picks by icon and cannot tell an Instagram reel from a story. */
+  const types = await listActivityTypes();
+  const named = block.payload.activityTypeName;
+  const type =
+    (named === undefined
+      ? null
+      : types.find((candidate) => !candidate.archived && candidate.name === named) ??
+        null) ?? activityTypeForPlatform(types, platform);
   if (type === null) return false;
 
   const when = block.completedUtc ?? block.startUtc ?? Date.now();
@@ -682,6 +701,9 @@ export async function syncBlockActivity(
     localDate: localDateOf(when, tz),
     source: "block",
     blockId,
+    /* Invariant 16: an auto-logged row has to be tellable from a hand-typed
+       one, and traceable back to what it published. */
+    note: block.payload.contentItemId ?? null,
   });
   return true;
 }
@@ -1397,4 +1419,370 @@ export async function editFuture(
 
   await applyBatch(changes);
   return { tailId: tail.id, resetExceptions: temporal ? later.length : 0 };
+}
+
+/* ------------------------------------------------------------------ *
+ * Content items and assets. Spec2 section 1.
+ * ------------------------------------------------------------------ */
+
+const CONTENT_FIELDS = [
+  "id",
+  "platform",
+  "status",
+  "title",
+  "body",
+  "payload",
+  "block_id",
+  "project_id",
+  "posted_utc",
+  "posted_url",
+  "sort_order",
+  "created_utc",
+  "updated_utc",
+  "deleted_utc",
+] as const;
+
+const CONTENT_COLUMNS = CONTENT_FIELDS.join(", ");
+
+type ContentRow = {
+  id: string;
+  platform: string;
+  status: string;
+  title: string;
+  body: string;
+  payload: string;
+  block_id: string | null;
+  project_id: string | null;
+  posted_utc: number | null;
+  posted_url: string | null;
+  sort_order: number;
+  created_utc: number;
+  updated_utc: number;
+  deleted_utc: number | null;
+};
+
+function toContentItem(row: ContentRow): ContentItem {
+  return {
+    id: row.id,
+    platform: oneOf(CONTENT_PLATFORMS, row.platform, "x"),
+    status: oneOf(CONTENT_STATUSES, row.status, "idea"),
+    title: row.title,
+    body: row.body,
+    payload: parsePayload(row.payload),
+    blockId: row.block_id,
+    projectId: row.project_id,
+    postedUtc: row.posted_utc,
+    postedUrl: row.posted_url,
+    sortOrder: row.sort_order,
+    createdUtc: row.created_utc,
+    updatedUtc: row.updated_utc,
+    deletedUtc: row.deleted_utc,
+  };
+}
+
+const CONTENT_COLUMN_OF: Partial<Record<keyof ContentItem, string>> = {
+  platform: "platform",
+  status: "status",
+  title: "title",
+  body: "body",
+  payload: "payload",
+  blockId: "block_id",
+  projectId: "project_id",
+  postedUtc: "posted_utc",
+  postedUrl: "posted_url",
+  sortOrder: "sort_order",
+  deletedUtc: "deleted_utc",
+};
+
+function encodeContentField(
+  field: keyof ContentItem,
+  value: ContentItem[keyof ContentItem] | undefined,
+): SqlValue {
+  if (field === "payload") return JSON.stringify(value ?? {});
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number" || typeof value === "string") return value;
+  return String(value);
+}
+
+function contentInsertStep(item: ContentItem): Step {
+  return {
+    sql: `INSERT INTO content_items
+            (id, platform, status, title, body, payload, block_id, project_id,
+             posted_utc, posted_url, sort_order, created_utc, updated_utc,
+             deleted_utc, hlc, device_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    params: [
+      item.id,
+      item.platform,
+      item.status,
+      item.title,
+      item.body,
+      JSON.stringify(item.payload),
+      item.blockId,
+      item.projectId,
+      item.postedUtc,
+      item.postedUrl,
+      item.sortOrder,
+      item.createdUtc,
+      item.updatedUtc,
+      item.deletedUtc,
+      "",
+      "",
+    ],
+  };
+}
+
+export async function insertContentItem(item: ContentItem): Promise<void> {
+  await applyInsert("content_item", item.id, contentInsertStep(item));
+}
+
+export async function getContentItem(id: string): Promise<ContentItem | null> {
+  const rows = await query<ContentRow>(
+    `SELECT ${CONTENT_COLUMNS} FROM content_items
+      WHERE id = ? AND deleted_utc IS NULL`,
+    [id],
+  );
+  const row = rows[0];
+  return row === undefined ? null : toContentItem(row);
+}
+
+export async function updateContentItem(
+  id: string,
+  patch: Partial<ContentItem>,
+): Promise<void> {
+  const current = await getContentItem(id);
+  if (current === null) throw new Error(`Content item ${id} not found`);
+
+  const changes: FieldChange[] = [];
+  for (const [key, column] of Object.entries(CONTENT_COLUMN_OF)) {
+    if (column === undefined) continue;
+    const field = key as keyof ContentItem;
+    if (!(field in patch)) continue;
+    changes.push({
+      field: column,
+      oldValue: encodeContentField(field, current[field]),
+      newValue: encodeContentField(field, patch[field]),
+    });
+  }
+
+  if (changes.length > 0) await applyUpdate("content_item", id, changes);
+}
+
+/* No hard delete anywhere. Architecture invariant 5. */
+export async function softDeleteContentItem(id: string): Promise<void> {
+  await updateContentItem(id, { deletedUtc: Date.now() });
+}
+
+/* Bounded by platform, then narrowed by whatever the filter bar has set. The
+   grid never asks for every content row in the database. */
+export async function listContent(
+  filter: ContentFilter,
+  limit = 500,
+): Promise<ContentItem[]> {
+  const wheres = ["deleted_utc IS NULL", "platform = ?"];
+  const params: SqlValue[] = [filter.platform];
+
+  if (filter.statuses.length > 0) {
+    wheres.push(`status IN (${filter.statuses.map(() => "?").join(", ")})`);
+    params.push(...filter.statuses);
+  }
+
+  if (filter.projectId !== null) {
+    wheres.push("project_id = ?");
+    params.push(filter.projectId);
+  }
+
+  /* FTS decides which rows match the text; ordering is applied in the domain,
+     so one comparator serves every sort option and stays testable. */
+  const match = ftsQuery(filter.query);
+  if (match !== null) {
+    wheres.push(
+      "rowid IN (SELECT rowid FROM content_fts WHERE content_fts MATCH ?)",
+    );
+    params.push(match);
+  }
+
+  params.push(limit);
+
+  const rows = await query<ContentRow>(
+    `SELECT ${CONTENT_COLUMNS} FROM content_items
+      WHERE ${wheres.join(" AND ")}
+      ORDER BY updated_utc DESC
+      LIMIT ?`,
+    params,
+  );
+  return rows.map(toContentItem);
+}
+
+/* Powers the sub-nav count badges. One grouped read rather than four. */
+export async function countUnfinishedContent(): Promise<
+  Record<ContentPlatform, number>
+> {
+  const rows = await query<{ platform: string; n: number }>(
+    `SELECT platform, count(*) AS n FROM content_items
+      WHERE deleted_utc IS NULL AND status IN ('idea', 'draft')
+      GROUP BY platform`,
+  );
+
+  const counts: Record<ContentPlatform, number> = {
+    x: 0,
+    linkedin: 0,
+    instagram: 0,
+    youtube: 0,
+  };
+  for (const row of rows) {
+    const platform = CONTENT_PLATFORMS.find((value) => value === row.platform);
+    if (platform !== undefined) counts[platform] = row.n;
+  }
+  return counts;
+}
+
+export async function searchContent(
+  term: string,
+  limit = 50,
+): Promise<ContentItem[]> {
+  const match = ftsQuery(term);
+  if (match === null) return [];
+  const rows = await query<ContentRow>(
+    `SELECT ${CONTENT_FIELDS.map((column) => `c.${column}`).join(", ")}
+       FROM content_fts f
+       JOIN content_items c ON c.rowid = f.rowid
+      WHERE content_fts MATCH ?
+        AND c.deleted_utc IS NULL
+      ORDER BY rank
+      LIMIT ?`,
+    [match, limit],
+  );
+  return rows.map(toContentItem);
+}
+
+export async function contentItemForBlock(
+  blockId: string,
+): Promise<ContentItem | null> {
+  const rows = await query<ContentRow>(
+    `SELECT ${CONTENT_COLUMNS} FROM content_items
+      WHERE block_id = ? AND deleted_utc IS NULL
+      LIMIT 1`,
+    [blockId],
+  );
+  const row = rows[0];
+  return row === undefined ? null : toContentItem(row);
+}
+
+const ASSET_COLUMNS =
+  "id, path, sha256, mime, width, height, bytes, origin, created_utc, deleted_utc";
+
+const ASSET_ORIGINS = ["import", "generated", "capture"] as const;
+const ASSET_ROLES = ["primary", "variant", "reference"] as const;
+
+type AssetRow = {
+  id: string;
+  path: string;
+  sha256: string;
+  mime: string;
+  width: number | null;
+  height: number | null;
+  bytes: number;
+  origin: string;
+  created_utc: number;
+  deleted_utc: number | null;
+};
+
+function toAsset(row: AssetRow): Asset {
+  return {
+    id: row.id,
+    path: row.path,
+    sha256: row.sha256,
+    mime: row.mime,
+    width: row.width,
+    height: row.height,
+    bytes: row.bytes,
+    origin: oneOf(ASSET_ORIGINS, row.origin, "import"),
+    createdUtc: row.created_utc,
+    deletedUtc: row.deleted_utc,
+  };
+}
+
+export async function insertAsset(asset: Asset): Promise<void> {
+  await applyInsert("asset", asset.id, {
+    sql: `INSERT INTO assets
+            (id, path, sha256, mime, width, height, bytes, origin,
+             created_utc, deleted_utc, hlc, device_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    params: [
+      asset.id,
+      asset.path,
+      asset.sha256,
+      asset.mime,
+      asset.width,
+      asset.height,
+      asset.bytes,
+      asset.origin,
+      asset.createdUtc,
+      asset.deletedUtc,
+      "",
+      "",
+    ],
+  });
+}
+
+/* The deduplication lookup. Invariant 11: importing the same bytes twice must
+   produce one row, so every import goes through this first. */
+export async function assetBySha(sha256: string): Promise<Asset | null> {
+  const rows = await query<AssetRow>(
+    `SELECT ${ASSET_COLUMNS} FROM assets
+      WHERE sha256 = ? AND deleted_utc IS NULL`,
+    [sha256],
+  );
+  const row = rows[0];
+  return row === undefined ? null : toAsset(row);
+}
+
+export async function linkAsset(
+  contentId: string,
+  assetId: string,
+  role: AssetRole = "primary",
+  sortOrder = 0,
+): Promise<void> {
+  await execute(
+    `INSERT OR REPLACE INTO content_assets (content_id, asset_id, role, sort_order)
+     VALUES (?, ?, ?, ?)`,
+    [contentId, assetId, role, sortOrder],
+  );
+}
+
+/* content_assets is a join table with no user data of its own, so a real
+   DELETE here does not breach invariant 5: the asset row and the item row both
+   survive, only the link between them goes. */
+export async function unlinkAsset(
+  contentId: string,
+  assetId: string,
+  role: AssetRole,
+): Promise<void> {
+  await execute(
+    `DELETE FROM content_assets
+      WHERE content_id = ? AND asset_id = ? AND role = ?`,
+    [contentId, assetId, role],
+  );
+}
+
+export type LinkedAsset = Asset & { role: AssetRole };
+
+export async function assetsForContent(
+  contentId: string,
+): Promise<LinkedAsset[]> {
+  const rows = await query<AssetRow & { role: string }>(
+    `SELECT ${ASSET_COLUMNS.split(", ")
+      .map((column) => `a.${column}`)
+      .join(", ")}, ca.role AS role
+       FROM content_assets ca
+       JOIN assets a ON a.id = ca.asset_id
+      WHERE ca.content_id = ? AND a.deleted_utc IS NULL
+      ORDER BY ca.sort_order, a.created_utc`,
+    [contentId],
+  );
+  return rows.map((row) => ({
+    ...toAsset(row),
+    role: oneOf(ASSET_ROLES, row.role, "primary"),
+  }));
 }

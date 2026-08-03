@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import WeekView from "../views/calendar/WeekView";
+import ContentView from "../views/content/ContentView";
 import MomentumView from "../views/momentum/MomentumView";
 import SettingsView from "../views/settings/SettingsView";
 import AiPanel from "../panel/AiPanel";
@@ -58,6 +59,8 @@ export default function AppShell({ view, onViewChange }: AppShellProps) {
             period navigation in it and the placeholders do not. */}
         {view === "calendar" ? (
           <WeekView />
+        ) : view === "content" ? (
+          <ContentView />
         ) : view === "momentum" ? (
           <MomentumView />
         ) : (

@@ -128,6 +128,11 @@
   --heat-cell: 8px;
   --heat-gap: 4px;
 
+  /* Content surfaces, Spec2 1.6. */
+  --content-card-min: 260px;
+  --content-card-h: 132px;
+  --content-grid-gap: 12px;
+
   /* Command palette. Not in SPEC 4's layout figures; PLAN phase 10 asks for
      the component without giving it dimensions. */
   --palette-w: 560px;

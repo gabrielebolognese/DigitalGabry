@@ -13,11 +13,20 @@ export type RevealRequest = {
   token: number;
 };
 
+/* The content view owns which platform tab is open, and the palette can pick an
+   item on any of them. Same shape and same reason as RevealRequest. */
+export type ContentRevealRequest = {
+  platform: string;
+  itemId: string;
+  token: number;
+};
+
 export type UiState = {
   selectedEntryId: string | null;
   inspectorOpen: boolean;
   editingTitleEntryId: string | null;
   reveal: RevealRequest | null;
+  contentReveal: ContentRevealRequest | null;
 };
 
 /* A module level store rather than context, so selection can be read from the
@@ -28,6 +37,7 @@ let state: UiState = {
   inspectorOpen: false,
   editingTitleEntryId: null,
   reveal: null,
+  contentReveal: null,
 };
 
 let revealToken = 0;
@@ -68,6 +78,7 @@ export const ui = {
   revealEntry(entryId: string, startUtc: number): void {
     revealToken += 1;
     commit({
+      ...state,
       selectedEntryId: entryId,
       inspectorOpen: true,
       editingTitleEntryId: null,
@@ -79,6 +90,14 @@ export const ui = {
   revealInstant(startUtc: number): void {
     revealToken += 1;
     commit({ ...state, reveal: { entryId: null, startUtc, token: revealToken } });
+  },
+
+  revealContent(platform: string, itemId: string): void {
+    revealToken += 1;
+    commit({
+      ...state,
+      contentReveal: { platform, itemId, token: revealToken },
+    });
   },
 
   clearSelection(): void {

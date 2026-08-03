@@ -2,7 +2,14 @@ import { createHlcClock } from "../domain/hlc";
 import { uuidv7 } from "../domain/id";
 import { query, transaction, type SqlValue, type Step } from "./client";
 
-export type Entity = "block" | "project" | "tag" | "activity_type" | "activity_log";
+export type Entity =
+  | "block"
+  | "project"
+  | "tag"
+  | "activity_type"
+  | "activity_log"
+  | "content_item"
+  | "asset";
 
 const TABLES: Record<Entity, string> = {
   block: "blocks",
@@ -10,6 +17,8 @@ const TABLES: Record<Entity, string> = {
   tag: "tags",
   activity_type: "activity_types",
   activity_log: "activity_log",
+  content_item: "content_items",
+  asset: "assets",
 };
 
 /* A creation is recorded as one lifecycle op rather than one op per column.

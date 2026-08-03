@@ -21,12 +21,18 @@ import {
 import { fuzzyRank } from "../domain/fuzzy";
 import { DEFAULT_TZ, formatTime, formatWeekday } from "../domain/time";
 import type { Block } from "../domain/block";
-import { searchBlocks } from "../db/repository";
+import {
+  PLATFORM_LABELS,
+  STATUS_LABELS,
+  type ContentItem,
+} from "../domain/content";
+import { searchBlocks, searchContent } from "../db/repository";
 import { redo, undo } from "../db/ops";
 import { runBackup, runExport } from "../backup/run";
 import { BLOCKS_CHANGED } from "../store/events";
 import { ui } from "../store/useUiStore";
 import { iconForBlock, type IconComponent } from "./blockIcon";
+import { iconForPlatform } from "./platformIcon";
 import type { ViewId } from "./Rail";
 
 const SEARCH_DEBOUNCE_MS = 120;
@@ -61,6 +67,7 @@ export default function CommandPalette({
   const [open, setOpen] = useState(false);
   const [queryText, setQueryText] = useState("");
   const [blocks, setBlocks] = useState<readonly Block[]>([]);
+  const [content, setContent] = useState<readonly ContentItem[]>([]);
   const [active, setActive] = useState(0);
   const [note, setNote] = useState<string | null>(null);
 
@@ -74,6 +81,7 @@ export default function CommandPalette({
     setOpen(false);
     setQueryText("");
     setBlocks([]);
+    setContent([]);
     setActive(0);
     setNote(null);
     const target = returnFocusRef.current;
@@ -230,19 +238,26 @@ export default function CommandPalette({
     const term = queryText.trim();
     if (term === "") {
       setBlocks([]);
+      setContent([]);
       return;
     }
 
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      void searchBlocks(term, 40)
-        .then((found) => {
-          if (!cancelled) setBlocks(found);
+      /* Two indexes, one box. Settled together so the list does not reorder
+         under the cursor as the slower of the two arrives. */
+      void Promise.all([searchBlocks(term, 40), searchContent(term, 40)])
+        .then(([foundBlocks, foundContent]) => {
+          if (cancelled) return;
+          setBlocks(foundBlocks);
+          setContent(foundContent);
         })
         /* A search that fails must not take the palette down with it; the
            command half of the list still works without it. */
         .catch(() => {
-          if (!cancelled) setBlocks([]);
+          if (cancelled) return;
+          setBlocks([]);
+          setContent([]);
         });
     }, SEARCH_DEBOUNCE_MS);
 
@@ -274,12 +289,19 @@ export default function CommandPalette({
     );
   }, [blocks, queryText]);
 
+  const shownContent = useMemo(
+    () =>
+      fuzzyRank(queryText, content, (item) => item.title).slice(0, MAX_BLOCK_RESULTS),
+    [content, queryText],
+  );
+
   const rows = useMemo(
     () => [
       ...shownCommands.map((command) => ({ kind: "command" as const, command })),
       ...shownBlocks.map((block) => ({ kind: "block" as const, block })),
+      ...shownContent.map((item) => ({ kind: "content" as const, item })),
     ],
-    [shownBlocks, shownCommands],
+    [shownBlocks, shownCommands, shownContent],
   );
 
   useEffect(() => {
@@ -292,6 +314,12 @@ export default function CommandPalette({
       if (row === undefined) return;
       if (row.kind === "command") {
         void row.command.run();
+        return;
+      }
+      if (row.kind === "content") {
+        ui.revealContent(row.item.platform, row.item.id);
+        onViewChange("content");
+        close();
         return;
       }
       ui.revealEntry(row.block.id, row.block.startUtc);
@@ -424,6 +452,22 @@ export default function CommandPalette({
                         {row.command.shortcut}
                       </span>
                     )}
+                  </>,
+                );
+              }
+
+              if (row.kind === "content") {
+                const PlatformIcon = iconForPlatform(row.item.platform);
+                return renderRow(
+                  index,
+                  <>
+                    <PlatformIcon className="icon-content shrink-0" aria-hidden />
+                    <span className="min-w-0 flex-1 truncate text-meta">
+                      {row.item.title === "" ? "Untitled" : row.item.title}
+                    </span>
+                    <span className="shrink-0 text-micro text-tertiary">
+                      {`${PLATFORM_LABELS[row.item.platform]} ${STATUS_LABELS[row.item.status]}`}
+                    </span>
                   </>,
                 );
               }
