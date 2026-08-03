@@ -141,6 +141,12 @@ export type BlockLike = {
   endUtc: number | null;
   kind: BlockKind;
   tags: readonly string[];
+  /* Read by derived, deadline-backfill and conditional. Optional, because most
+     of the pipeline needs none of it and a caller should not have to fabricate
+     fields to ask a simple question. */
+  title?: string;
+  status?: string;
+  platform?: string;
 };
 
 export type ContentLike = {

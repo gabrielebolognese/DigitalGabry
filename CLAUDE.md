@@ -6,7 +6,7 @@ A local-first desktop calendar and momentum tracker. Tauri v2, React, TypeScript
 
 Part two extends the app: `Spec2.md` covers content surfaces, `Spec1.1.md` the generation layer. Where documents conflict, `SPEC.md` wins on tokens and invariants, `Spec1.1.md` wins on scheduling semantics. `PLAN.md` records three corrections where those two documents went stale, and those corrections win over the spec text.
 
-**Current phase: 11, content foundations.** Phases 0 through 10 are merged. Update this line when a phase merges. One branch per phase named `phase-NN-slug`, one commit, and a cleared context before the next one.
+**Current phase: 11.5C, calendar rendering and editors.** Phases 0 through 11.5B are merged. Update this line when a phase merges. One branch per phase named `phase-NN-slug`, one commit, and a cleared context before the next one.
 
 **Migration numbers.** `001_init`, `002_recurrence`, `003_settings` exist. Content is **004**, generation is **005**. Both spec texts name numbers that are already taken.
 
@@ -27,7 +27,7 @@ npx vitest                                   # watch mode
 
 - Implement only the current phase from `PLAN.md`. Never build ahead.
 - Prefer editing existing files over creating new ones.
-- No new dependency without asking first. The stack in `SPEC.md` section 2 is fixed. Part two adds exactly three, listed in `PLAN.md`, each installed at the phase that first needs it: `zod` (11), `@tauri-apps/plugin-clipboard-manager` (12), `modern-screenshot` (13). Nothing else.
+- No new dependency without asking first. The stack in `SPEC.md` section 2 is fixed. Part two adds exactly three, listed in `PLAN.md`, each installed at the phase that first needs it: `zod` (11.5A1), `@tauri-apps/plugin-clipboard-manager` (12), `modern-screenshot` (13). Nothing else.
 - No comments explaining what code does. Comments only for why a non-obvious decision was made.
 - Strict TypeScript. No `any`, no `@ts-ignore`, no non-null assertions without a comment justifying them.
 - When a value is not specified in `SPEC.md`, that is a spec gap. Say so, propose a value, and wait.

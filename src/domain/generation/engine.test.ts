@@ -344,9 +344,13 @@ describe("edge cases from Spec1.1 section 16", () => {
   });
 
   it("an unknown kind is ignored rather than fatal", () => {
+    /* Every kind in the union is registered as of 11.5B, so this needs a name
+       that is not one, which is exactly what a ruleset imported from a newer
+       version of the app would carry. */
+    const unknown = "not-a-real-kind" as Generator["kind"];
     const slots = generate(
       ruleset(
-        generator({ id: "bad", kind: "gap-fill", config: {} }),
+        generator({ id: "bad", kind: unknown, config: {} }),
         generator({ id: "good", config: { times: ["09:00"] } }),
       ),
       windowOf("2026-08-03T00:00:00Z", "2026-08-04T00:00:00Z"),

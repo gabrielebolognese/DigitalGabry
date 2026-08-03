@@ -28,6 +28,20 @@ import {
   type MomentumDay,
 } from "../domain/momentum";
 import { localDateOf, type UtcRange } from "../domain/time";
+import type {
+  Generator,
+  Modifier,
+  ResolvedRuleset,
+  SlotBinding,
+  SlotOverride,
+} from "../domain/generation/types";
+import {
+  applyPlan,
+  findOverlap,
+  planSave,
+  type SaveMode,
+} from "../domain/generation/versioning";
+import type { RekeyPlan } from "../domain/generation/rekey";
 import {
   CONTENT_PLATFORMS,
   CONTENT_STATUSES,
@@ -1785,4 +1799,443 @@ export async function assetsForContent(
     ...toAsset(row),
     role: oneOf(ASSET_ROLES, row.role, "primary"),
   }));
+}
+
+/* ------------------------------------------------------------------ *
+ * The generation layer. Spec1.1 sections 8 and 10.
+ * ------------------------------------------------------------------ */
+
+const GENERATOR_COLUMNS =
+  "id, version, ruleset_id, name, kind, role, stage, enabled, layer, sort_order, " +
+  "valid_from, valid_to, timezone, emits, config, dst, deleted_utc";
+
+type GeneratorRow = {
+  id: string;
+  version: number;
+  ruleset_id: string;
+  name: string;
+  kind: string;
+  role: string;
+  stage: string | null;
+  enabled: number;
+  layer: number;
+  sort_order: number;
+  valid_from: number | null;
+  valid_to: number | null;
+  timezone: string;
+  emits: string;
+  config: string;
+  dst: string | null;
+  deleted_utc: number | null;
+};
+
+function parseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    /* A malformed config must not take the calendar down; the registry will
+       refuse it by name when generation runs. */
+    return {};
+  }
+}
+
+function toGenerator(row: GeneratorRow): Generator {
+  return {
+    id: row.id,
+    version: row.version,
+    name: row.name,
+    kind: row.kind as Generator["kind"],
+    enabled: row.enabled !== 0,
+    layer: row.layer,
+    validFrom: row.valid_from,
+    validTo: row.valid_to,
+    timezone: row.timezone,
+    emits: parseJson(row.emits) as Generator["emits"],
+    config: parseJson(row.config),
+    ...(row.dst === null ? {} : { dst: parseJson(row.dst) as Generator["dst"] }),
+  };
+}
+
+function toModifier(row: GeneratorRow): Modifier {
+  return {
+    id: row.id,
+    version: row.version,
+    name: row.name,
+    kind: row.kind as Modifier["kind"],
+    enabled: row.enabled !== 0,
+    order: row.sort_order,
+    validFrom: row.valid_from,
+    validTo: row.valid_to,
+    timezone: row.timezone,
+    config: parseJson(row.config),
+  };
+}
+
+export type Ruleset = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  sortOrder: number;
+};
+
+export async function listRulesets(): Promise<Ruleset[]> {
+  const rows = await query<{
+    id: string;
+    name: string;
+    enabled: number;
+    sort_order: number;
+  }>(
+    `SELECT id, name, enabled, sort_order FROM rulesets
+      WHERE deleted_utc IS NULL ORDER BY sort_order, name`,
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    enabled: row.enabled !== 0,
+    sortOrder: row.sort_order,
+  }));
+}
+
+export async function insertRuleset(ruleset: Ruleset): Promise<void> {
+  const now = Date.now();
+  await execute(
+    `INSERT INTO rulesets (id, name, enabled, sort_order, created_utc, updated_utc, hlc, device_id)
+     VALUES (?, ?, ?, ?, ?, ?, '', '')`,
+    [ruleset.id, ruleset.name, ruleset.enabled ? 1 : 0, ruleset.sortOrder, now, now],
+  );
+}
+
+/* Every version, not only the one in force. The engine picks per date, so a
+   window spanning an edit renders the days before it with the old rule and the
+   days after with the new one. */
+export async function loadRuleset(rulesetId: string): Promise<ResolvedRuleset | null> {
+  const meta = await query<{ id: string; name: string }>(
+    `SELECT id, name FROM rulesets WHERE id = ? AND deleted_utc IS NULL`,
+    [rulesetId],
+  );
+  const head = meta[0];
+  if (head === undefined) return null;
+
+  const rows = await query<GeneratorRow>(
+    `SELECT ${GENERATOR_COLUMNS} FROM generators
+      WHERE ruleset_id = ? AND deleted_utc IS NULL
+      ORDER BY id, version`,
+    [rulesetId],
+  );
+
+  return {
+    id: head.id,
+    name: head.name,
+    generators: rows.filter((row) => row.role !== "modifier").map(toGenerator),
+    modifiers: rows.filter((row) => row.role === "modifier").map(toModifier),
+  };
+}
+
+export async function listGeneratorVersions(
+  generatorId: string,
+): Promise<Generator[]> {
+  const rows = await query<GeneratorRow>(
+    `SELECT ${GENERATOR_COLUMNS} FROM generators
+      WHERE id = ? AND deleted_utc IS NULL ORDER BY version`,
+    [generatorId],
+  );
+  return rows.map(toGenerator);
+}
+
+function generatorInsertStep(
+  generator: Generator,
+  rulesetId: string,
+  nowUtc: number,
+): Step {
+  return {
+    sql: `INSERT INTO generators
+            (id, version, ruleset_id, name, kind, role, stage, enabled, layer,
+             sort_order, valid_from, valid_to, timezone, emits, config, dst,
+             created_utc, updated_utc, deleted_utc, hlc, device_id)
+          VALUES (?, ?, ?, ?, ?, 'generator', NULL, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '', '')`,
+    params: [
+      generator.id,
+      generator.version,
+      rulesetId,
+      generator.name,
+      generator.kind,
+      generator.enabled ? 1 : 0,
+      generator.layer,
+      generator.validFrom,
+      generator.validTo,
+      generator.timezone,
+      JSON.stringify(generator.emits),
+      JSON.stringify(generator.config),
+      generator.dst === undefined ? null : JSON.stringify(generator.dst),
+      nowUtc,
+      nowUtc,
+    ],
+  };
+}
+
+export type SaveGeneratorResult =
+  | { ok: true; version: number; closed: number }
+  | { ok: false; error: string };
+
+/* Spec1.1 section 8. One transaction: the old version closes and the new one
+   opens at the same instant, which is what makes overlapping versions
+   impossible rather than merely unlikely. Edge case 16. */
+export async function saveGeneratorVersion(
+  rulesetId: string,
+  next: Omit<Generator, "version" | "validFrom" | "validTo">,
+  mode: SaveMode,
+  atUtc: number,
+  range?: { from: number; to: number },
+): Promise<SaveGeneratorResult> {
+  const existing = await listGeneratorVersions(next.id);
+
+  const plan = planSave<Generator>({
+    existing,
+    next,
+    mode,
+    atUtc,
+    ...(range === undefined ? {} : { range }),
+  });
+
+  const after = applyPlan(existing, plan);
+  const overlap = findOverlap(after);
+  if (overlap !== null) {
+    return {
+      ok: false,
+      error: `Saving would leave versions ${overlap.left.version} and ${overlap.right.version} overlapping`,
+    };
+  }
+
+  const steps: Step[] = [];
+
+  for (const row of plan.closed) {
+    steps.push({
+      sql: `UPDATE generators SET valid_to = ?, updated_utc = ?
+             WHERE id = ? AND version = ?`,
+      params: [row.validTo, atUtc, row.id, row.version],
+    });
+  }
+
+  for (const row of plan.rewritten) {
+    steps.push({
+      sql: `UPDATE generators SET name = ?, kind = ?, enabled = ?, layer = ?,
+                   timezone = ?, emits = ?, config = ?, dst = ?, updated_utc = ?
+             WHERE id = ? AND version = ?`,
+      params: [
+        row.name,
+        row.kind,
+        row.enabled ? 1 : 0,
+        row.layer,
+        row.timezone,
+        JSON.stringify(row.emits),
+        JSON.stringify(row.config),
+        row.dst === undefined ? null : JSON.stringify(row.dst),
+        atUtc,
+        row.id,
+        row.version,
+      ],
+    });
+  }
+
+  if (plan.inserted !== null) {
+    steps.push(generatorInsertStep(plan.inserted, rulesetId, atUtc));
+  }
+
+  if (steps.length === 0) return { ok: true, version: 0, closed: 0 };
+
+  await transaction(steps);
+  return {
+    ok: true,
+    version: plan.inserted?.version ?? 0,
+    closed: plan.closed.length,
+  };
+}
+
+/* ---- overrides ---- */
+
+export type StoredOverride = SlotOverride & {
+  generatorId: string;
+  localDate: string;
+  ordinal: number;
+};
+
+export async function listOverrides(
+  generatorIds?: readonly string[],
+): Promise<StoredOverride[]> {
+  const rows = await query<{
+    slot_key: string;
+    generator_id: string;
+    local_date: string;
+    ordinal: number;
+    action: string;
+    moved_start_utc: number | null;
+    moved_end_utc: number | null;
+  }>(
+    `SELECT slot_key, generator_id, local_date, ordinal, action,
+            moved_start_utc, moved_end_utc
+       FROM slot_overrides WHERE deleted_utc IS NULL`,
+  );
+
+  const wanted =
+    generatorIds === undefined ? null : new Set(generatorIds);
+
+  return rows
+    .filter((row) => wanted === null || wanted.has(row.generator_id))
+    .map((row) => ({
+      slotKey: row.slot_key,
+      generatorId: row.generator_id,
+      localDate: row.local_date,
+      ordinal: row.ordinal,
+      action: row.action as SlotOverride["action"],
+      movedStartUtc: row.moved_start_utc,
+      movedEndUtc: row.moved_end_utc,
+    }));
+}
+
+export async function putOverride(override: StoredOverride): Promise<void> {
+  const now = Date.now();
+  await execute(
+    `INSERT INTO slot_overrides
+       (slot_key, generator_id, local_date, ordinal, action, moved_start_utc,
+        moved_end_utc, created_utc, updated_utc, hlc, device_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')
+     ON CONFLICT(slot_key) DO UPDATE SET
+       action = excluded.action,
+       moved_start_utc = excluded.moved_start_utc,
+       moved_end_utc = excluded.moved_end_utc,
+       deleted_utc = NULL,
+       updated_utc = excluded.updated_utc`,
+    [
+      override.slotKey,
+      override.generatorId,
+      override.localDate,
+      override.ordinal,
+      override.action,
+      override.movedStartUtc ?? null,
+      override.movedEndUtc ?? null,
+      now,
+      now,
+    ],
+  );
+}
+
+export async function clearOverride(slotKey: string): Promise<void> {
+  await execute(
+    `UPDATE slot_overrides SET deleted_utc = ?, updated_utc = ? WHERE slot_key = ?`,
+    [Date.now(), Date.now(), slotKey],
+  );
+}
+
+/* Edge case 9. An override whose generator is gone has nothing to attach to,
+   but is not deleted at once: a generator can come back from an undo, and
+   losing every skip on the way would be worse than keeping dead rows for a
+   while. Ninety days is long enough for that and short enough to stay tidy. */
+export const ORPHAN_GRACE_MS = 90 * 86_400_000;
+
+export async function collectOrphanedOverrides(nowUtc: number): Promise<number> {
+  const cutoff = nowUtc - ORPHAN_GRACE_MS;
+  const rows = await query<{ slot_key: string }>(
+    `SELECT o.slot_key FROM slot_overrides o
+      WHERE o.deleted_utc IS NULL
+        AND o.updated_utc < ?
+        AND NOT EXISTS (
+          SELECT 1 FROM generators g
+           WHERE g.id = o.generator_id AND g.deleted_utc IS NULL
+        )`,
+    [cutoff],
+  );
+
+  for (const row of rows) await clearOverride(row.slot_key);
+  return rows.length;
+}
+
+/* ---- bindings ---- */
+
+export async function listBindings(): Promise<
+  (SlotBinding & { generatorId: string })[]
+> {
+  const rows = await query<{
+    slot_key: string;
+    generator_id: string;
+    content_id: string | null;
+    block_id: string | null;
+  }>(
+    `SELECT slot_key, generator_id, content_id, block_id
+       FROM slot_bindings WHERE deleted_utc IS NULL`,
+  );
+  return rows.map((row) => ({
+    slotKey: row.slot_key,
+    generatorId: row.generator_id,
+    contentId: row.content_id,
+    blockId: row.block_id,
+  }));
+}
+
+export async function putBinding(
+  slotKey: string,
+  generatorId: string,
+  contentId: string | null,
+  blockId: string | null,
+): Promise<void> {
+  const now = Date.now();
+  await execute(
+    `INSERT INTO slot_bindings
+       (slot_key, generator_id, content_id, block_id, bound_utc, created_utc,
+        updated_utc, hlc, device_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, '', '')
+     ON CONFLICT(slot_key) DO UPDATE SET
+       content_id = excluded.content_id,
+       block_id = excluded.block_id,
+       deleted_utc = NULL,
+       updated_utc = excluded.updated_utc`,
+    [slotKey, generatorId, contentId, blockId, now, now, now],
+  );
+}
+
+export async function clearBinding(slotKey: string): Promise<void> {
+  await execute(
+    `UPDATE slot_bindings SET deleted_utc = ?, updated_utc = ? WHERE slot_key = ?`,
+    [Date.now(), Date.now(), slotKey],
+  );
+}
+
+/* Edge case 25. A materialized block the user deleted must not come back. The
+   binding goes with it, which returns the slot to virtual on the next pass,
+   and nothing regenerates the block because only a binding would. */
+export async function reconcileDeletedBlocks(): Promise<number> {
+  const rows = await query<{ slot_key: string }>(
+    `SELECT b.slot_key FROM slot_bindings b
+       JOIN blocks bl ON bl.id = b.block_id
+      WHERE b.deleted_utc IS NULL AND bl.deleted_utc IS NOT NULL`,
+  );
+  for (const row of rows) await clearBinding(row.slot_key);
+  return rows.length;
+}
+
+/* Applies a rekey mapping in one transaction. Ordered so a key never collides
+   with one still to move: every row goes to a temporary key first, then to its
+   destination. Renaming in place would fail the moment two overrides swapped
+   ordinals, which is exactly what inserting a time at the start of a day does. */
+export async function applyRekeyPlan(plan: RekeyPlan): Promise<number> {
+  if (plan.pairs.length === 0) return 0;
+
+  const steps: Step[] = [];
+
+  for (const pair of plan.pairs) {
+    steps.push({
+      sql: `UPDATE slot_overrides SET slot_key = ? WHERE slot_key = ?`,
+      params: [`~${pair.toKey}`, pair.fromKey],
+    });
+  }
+
+  for (const pair of plan.pairs) {
+    steps.push({
+      sql: `UPDATE slot_overrides SET slot_key = ?, ordinal = ?, updated_utc = ?
+             WHERE slot_key = ?`,
+      params: [pair.toKey, pair.toOrdinal, Date.now(), `~${pair.toKey}`],
+    });
+  }
+
+  await transaction(steps);
+  return plan.pairs.length;
 }
