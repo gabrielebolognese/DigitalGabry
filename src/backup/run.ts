@@ -33,6 +33,12 @@ export type BackupSettings = {
   retention: number;
   lastBackupUtc: number | null;
   lastExportUtc: number | null;
+  /* Phase 12. Where "post this" stages an image for dragging, and the soft
+     character target. Both live here because this is already the settings
+     record the app reads at start; a second one would be a second thing to
+     keep in step. */
+  outboxDir?: string;
+  xSoftLimit?: number;
 };
 
 export async function defaultSettings(): Promise<BackupSettings> {

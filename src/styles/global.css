@@ -457,6 +457,14 @@ body,
   opacity: var(--opacity-ghost-icon);
 }
 
+/* Spec2 2.2. The X card is image forward, so the slot keeps its shape whether
+   or not there is an image in it: a card that changes height when a picture is
+   added makes the grid jump under the cursor. */
+.x-card-image {
+  aspect-ratio: var(--x-card-aspect);
+  width: 100%;
+}
+
 /* Content grid, Spec2 1.6. */
 .content-grid {
   display: grid;

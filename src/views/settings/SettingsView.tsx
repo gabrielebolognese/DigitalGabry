@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { emit } from "@tauri-apps/api/event";
 import { DEFAULT_TZ } from "../../domain/time";
 import { open } from "@tauri-apps/plugin-dialog";
+import { pictureDir as pictures } from "@tauri-apps/api/path";
+import { DEFAULT_SOFT_LIMIT, HARD_LIMIT } from "../../domain/xPost";
 import { maskKey, readApiKey, writeApiKey } from "../../panel/apiKey";
 import {
   readBackupSettings,
@@ -170,6 +172,67 @@ export default function SettingsView({ tz = DEFAULT_TZ }: { tz?: string }) {
                 </span>
               </div>
             ))}
+
+            <label className="flex flex-col gap-1">
+              <span className="text-micro uppercase text-tertiary">Outbox folder</span>
+              <div className="flex items-center gap-2">
+                <input
+                  readOnly
+                  className={CELL}
+                  aria-label="Outbox folder"
+                  value={backup.outboxDir ?? "Inside the vault"}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    void open({ directory: true }).then((chosen) => {
+                      if (typeof chosen === "string") {
+                        void saveBackup({ ...backup, outboxDir: chosen });
+                      }
+                    });
+                  }}
+                  className="motion-hover shrink-0 rounded-control border border-line px-2 py-1 text-meta text-primary hover:bg-hover"
+                >
+                  Choose
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void pictures().then((path) =>
+                      saveBackup({ ...backup, outboxDir: path }),
+                    );
+                  }}
+                  className="motion-hover shrink-0 rounded-control px-2 py-1 text-meta text-secondary hover:bg-hover hover:text-primary"
+                >
+                  Use Pictures
+                </button>
+              </div>
+              <span className="text-micro text-disabled">
+                Where "post this" stages an image, ready to drag into the composer
+              </span>
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-micro uppercase text-tertiary">
+                X character target
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={280}
+                className={CELL}
+                value={backup.xSoftLimit ?? DEFAULT_SOFT_LIMIT}
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  if (Number.isFinite(next) && next >= 1 && next <= HARD_LIMIT) {
+                    void saveBackup({ ...backup, xSoftLimit: Math.floor(next) });
+                  }
+                }}
+              />
+              <span className="text-micro text-disabled">
+                {`Only changes the counter colour. The ${HARD_LIMIT} platform maximum is always enforced`}
+              </span>
+            </label>
 
             <label className="flex flex-col gap-1">
               <span className="text-micro uppercase text-tertiary">Snapshots kept</span>

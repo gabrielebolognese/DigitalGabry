@@ -24,6 +24,14 @@ fn write_text_file(dir: String, name: String, contents: String) -> Result<(), St
     fs::write(Path::new(&dir).join(name), contents).map_err(to_message)
 }
 
+/// Image bytes for the vault. Returned as a plain array because the import
+/// path hashes and measures them in the webview, where the crypto and decode
+/// APIs already are.
+#[tauri::command]
+fn read_binary_file(path: String) -> Result<Vec<u8>, String> {
+    fs::read(&path).map_err(to_message)
+}
+
 #[tauri::command]
 fn read_text_file(path: String) -> Result<String, String> {
     fs::read_to_string(&path).map_err(to_message)
@@ -36,6 +44,28 @@ fn read_text_file(path: String) -> Result<String, String> {
 fn write_binary_file(dir: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
     fs::create_dir_all(&dir).map_err(to_message)?;
     fs::write(Path::new(&dir).join(name), bytes).map_err(to_message)
+}
+
+/// Copies a file into a directory under a new name. Used to stage an image
+/// from the content addressed vault into the outbox under a name a human can
+/// recognise in a file manager.
+#[tauri::command]
+fn copy_file(from: String, to_dir: String, to_name: String) -> Result<(), String> {
+    fs::create_dir_all(&to_dir).map_err(to_message)?;
+    fs::copy(&from, Path::new(&to_dir).join(to_name)).map_err(to_message)?;
+    Ok(())
+}
+
+/// Selects a file in the OS file manager. The opener plugin exposes this in
+/// JavaScript, but going through one command keeps the outbox flow in one
+/// place and lets the path be validated before a shell is involved.
+#[tauri::command]
+fn reveal_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !Path::new(&path).exists() {
+        return Err(format!("{path} is not there to reveal"));
+    }
+    app.opener().reveal_item_in_dir(path).map_err(to_message)
 }
 
 /// True when the path already exists, so an import that deduplicates on hash
@@ -191,11 +221,17 @@ pub fn run() {
         // in the database and never in the repository. SPEC 9.
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        // Phase 12: the "post this" flow needs writeImage, which the text
+        // clipboard alone cannot do.
+        .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             ensure_dir,
             write_text_file,
             write_binary_file,
+            copy_file,
+            reveal_path,
             read_text_file,
+            read_binary_file,
             path_exists,
             prune_older_than,
             prune_snapshots,
