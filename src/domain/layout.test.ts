@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { MAX_COLUMNS, densityFor, layoutDay, type Span } from "./layout";
+import {
+  MAX_COLUMNS,
+  PRIORITY_SLOT,
+  densityFor,
+  layoutDay,
+  type Span,
+} from "./layout";
 
 const span = (startMin: number, endMin: number): Span => ({ startMin, endMin });
 
@@ -87,5 +93,59 @@ describe("layoutDay", () => {
   it("is deterministic", () => {
     const items = [span(540, 720), span(560, 700), span(580, 640), span(590, 630)];
     expect(JSON.stringify(layoutDay(items))).toBe(JSON.stringify(layoutDay(items)));
+  });
+});
+
+describe("priority, so a ghost never displaces a block", () => {
+  const at = (startMin: number, endMin: number, priority?: number) =>
+    priority === undefined ? { startMin, endMin } : { startMin, endMin, priority };
+
+  it("hides the ghosts first when a cluster is wider than three", () => {
+    const items = [
+      { ...at(540, 600), id: "block-a" },
+      { ...at(540, 600), id: "block-b" },
+      { ...at(540, 600, PRIORITY_SLOT), id: "ghost-a" },
+      { ...at(540, 600, PRIORITY_SLOT), id: "ghost-b" },
+      { ...at(540, 600), id: "block-c" },
+    ];
+
+    const layout = layoutDay(items);
+    const shown = layout.placed.map((entry) => entry.item.id);
+
+    expect(shown).toContain("block-a");
+    expect(shown).toContain("block-b");
+    expect(shown).toContain("block-c");
+    expect(layout.overflow[0]?.count).toBe(2);
+  });
+
+  it("gives blocks the left hand columns", () => {
+    const layout = layoutDay([
+      { ...at(540, 600, PRIORITY_SLOT), id: "ghost" },
+      { ...at(540, 600), id: "block" },
+    ]);
+
+    const block = layout.placed.find((entry) => entry.item.id === "block");
+    const ghost = layout.placed.find((entry) => entry.item.id === "ghost");
+    expect(block?.placement.column).toBeLessThan(ghost?.placement.column ?? 99);
+  });
+
+  it("still shows a ghost when there is room for it", () => {
+    const layout = layoutDay([
+      { ...at(540, 600), id: "block" },
+      { ...at(540, 600, PRIORITY_SLOT), id: "ghost" },
+    ]);
+    expect(layout.placed).toHaveLength(2);
+    expect(layout.overflow).toEqual([]);
+  });
+
+  it("treats an unset priority as a block, so existing callers are unchanged", () => {
+    const layout = layoutDay([
+      { ...at(540, 600), id: "a" },
+      { ...at(540, 600), id: "b" },
+      { ...at(540, 600), id: "c" },
+      { ...at(540, 600), id: "d" },
+    ]);
+    expect(layout.placed).toHaveLength(3);
+    expect(layout.overflow[0]?.count).toBe(1);
   });
 });

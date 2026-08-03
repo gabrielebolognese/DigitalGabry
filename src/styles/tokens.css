@@ -140,6 +140,11 @@
   --palette-list-max-h: 320px;
   --palette-row-h: 32px;
 
+  /* Generated slots, Spec1.1 12.1. A slot is an intention, not a commitment,
+     and has to read as subordinate to a real block in every way. */
+  --opacity-ghost: 0.7;
+  --opacity-ghost-icon: 0.4;
+
   /* State opacities, SPEC 5.1 */
   --opacity-completed: 0.7;
   --opacity-completed-icon: 0.5;

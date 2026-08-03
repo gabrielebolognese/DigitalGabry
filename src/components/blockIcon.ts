@@ -45,9 +45,19 @@ const PLATFORM_ICONS: Partial<Record<Platform, IconComponent>> = {
 };
 
 export function iconForBlock(block: Block): IconComponent {
-  if (block.kind === "post" && block.payload.platform !== undefined) {
-    const platformIcon = PLATFORM_ICONS[block.payload.platform];
+  return iconForKindAndPlatform(block.kind, block.payload.platform);
+}
+
+/* The same resolution for something that is not a block yet. A generated slot
+   carries an intent rather than a row, and both have to pick the same glyph or
+   the ghost would not read as a preview of what it becomes. */
+export function iconForKindAndPlatform(
+  kind: BlockKind,
+  platform: Platform | undefined,
+): IconComponent {
+  if (kind === "post" && platform !== undefined) {
+    const platformIcon = PLATFORM_ICONS[platform];
     if (platformIcon !== undefined) return platformIcon;
   }
-  return KIND_ICONS[block.kind];
+  return KIND_ICONS[kind];
 }

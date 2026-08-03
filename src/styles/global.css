@@ -430,6 +430,33 @@ body,
   min-height: var(--palette-row-h);
 }
 
+/* Generated slots, Spec1.1 12.1. Dashed rather than solid, unfilled rather
+   than tinted, and never elevated on hover: an empty slot is a container
+   waiting for content, and rendering it like a real block would make every
+   unfilled one look like a missed obligation. */
+.slot-ghost {
+  border: var(--hairline) dashed var(--border);
+  border-radius: var(--radius-block);
+  background: none;
+  opacity: var(--opacity-ghost);
+}
+
+.slot-ghost:hover {
+  border-color: var(--border-strong);
+}
+
+.slot-ghost .icon-content {
+  opacity: var(--opacity-ghost-icon);
+}
+
+/* Marks a block that came from a rule. 14px, not the 10px Spec1.1 12.1 asks
+   for: SPEC 3.6 allows only 14 and 16, and a 10px glyph beside a 14px icon is
+   the mixed weight problem 3.6 warns about. Carried at reduced opacity so it
+   reads as an annotation rather than a second icon. */
+.slot-origin {
+  opacity: var(--opacity-ghost-icon);
+}
+
 /* Content grid, Spec2 1.6. */
 .content-grid {
   display: grid;
