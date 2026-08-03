@@ -14,6 +14,7 @@ import type { Project } from "../../db/repository";
 import type { ContentApi } from "../../store/useContent";
 import XCard from "./x/XCard";
 import LinkedInCard from "./linkedin/LinkedInCard";
+import InstagramCard from "./instagram/InstagramCard";
 
 /* Spec2 1.6. One grid shell for all four platforms; they differ in the card
    body, which arrives in phases 12 to 15, not in the shell around it. */
@@ -187,6 +188,13 @@ export default function ContentGrid({
                   imageUrl={imageUrlFor?.(item) ?? null}
                   onOpen={onOpen}
                   onPostThis={onPostThis}
+                />
+              ) : item.platform === "instagram" ? (
+                <InstagramCard
+                  key={item.id}
+                  item={item}
+                  thumbnailUrl={imageUrlFor?.(item) ?? null}
+                  onOpen={onOpen}
                 />
               ) : (
                 <Card key={item.id} item={item} nowUtc={nowUtc} onOpen={onOpen} />

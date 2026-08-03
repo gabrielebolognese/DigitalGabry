@@ -80,3 +80,25 @@ export async function postThis(request: PostThisRequest): Promise<PostThisResult
 export async function copyImageInstead(asset: Asset): Promise<void> {
   await writeImage(await resolveAssetPath(asset));
 }
+
+/* Spec2 4.4. Instagram has no useful web composer, so the flow differs: the
+   script goes to a file and to the clipboard, and the folder is revealed.
+   How it reaches the phone, by cloud folder, cable or message, is deliberately
+   outside the app's scope. */
+export async function sendToPhone(
+  item: ContentItem,
+  scriptText: string,
+  nowUtc: number,
+  tz: string,
+): Promise<string> {
+  const dir = await outboxDir();
+  await invoke("ensure_dir", { path: dir });
+
+  const name = outboxFileName(localDateOf(nowUtc, tz), item.title, "txt");
+  await invoke("write_text_file", { dir, name, contents: scriptText });
+
+  await writeText(scriptText);
+  await invoke("reveal_path", { path: joinPath(dir, name) });
+
+  return joinPath(dir, name);
+}

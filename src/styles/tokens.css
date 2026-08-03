@@ -136,6 +136,12 @@
   /* Content surfaces, Spec2 1.6 and 2.2. */
   --x-card-aspect: 16 / 9;
   --li-card-aspect: 4 / 5;
+  /* Instagram script editor, Spec2 4.3. */
+  --ig-left-w: 220px;
+  --ig-right-w: 260px;
+  --ig-gutter-w: 72px;
+  --ig-seconds-w: 44px;
+  --ig-thumb: 32px;
   --li-editor-w: 480px;
   --li-thumb-w: 64px;
   /* The capture surface is 1080x1350; the preview shows it at a twelfth. */
