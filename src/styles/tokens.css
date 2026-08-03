@@ -128,6 +128,11 @@
   --heat-cell: 8px;
   --heat-gap: 4px;
 
+  /* Preview strip bars, Spec1.1 12.4. One step per slot on the day, so the
+     shape reads at a glance without needing an axis. */
+  --preview-bar-step: 4px;
+  --preview-bar-base: 4px;
+
   /* Content surfaces, Spec2 1.6. */
   --content-card-min: 260px;
   --content-card-h: 132px;
@@ -139,6 +144,11 @@
   --palette-top: 88px;
   --palette-list-max-h: 320px;
   --palette-row-h: 32px;
+
+  /* Generated slots, Spec1.1 12.1. A slot is an intention, not a commitment,
+     and has to read as subordinate to a real block in every way. */
+  --opacity-ghost: 0.7;
+  --opacity-ghost-icon: 0.4;
 
   /* State opacities, SPEC 5.1 */
   --opacity-completed: 0.7;

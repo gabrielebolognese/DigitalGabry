@@ -14,7 +14,16 @@ export function densityFor(heightPx: number): Density {
 export type Span = {
   startMin: number;
   endMin: number;
+  /* Who yields when a cluster is wider than MAX_COLUMNS. Higher claims a
+     column first and is hidden last. Real blocks are 1, which is the default,
+     and generated ghost slots are 0: a slot is an intention, and an intention
+     must never push a commitment off the grid. Spec1.1 invariant 19 in
+     spirit, applied to layout rather than to data. */
+  priority?: number;
 };
+
+export const PRIORITY_BLOCK = 1;
+export const PRIORITY_SLOT = 0;
 
 export type Placement = {
   column: number;
@@ -61,7 +70,17 @@ export function layoutDay<T extends Span>(items: readonly T[]): DayLayout<T> {
     const assigned: Array<{ item: T; column: number }> = [];
     const hidden: T[] = [];
 
-    for (const item of cluster) {
+    /* Highest priority first, then by start. Lanes are handed out in this
+       order, so blocks take the left hand columns and ghosts fill whatever is
+       left, which is also what overflows when there is not enough room. */
+    const byPriority = [...cluster].sort(
+      (a, b) =>
+        (b.priority ?? PRIORITY_BLOCK) - (a.priority ?? PRIORITY_BLOCK) ||
+        a.startMin - b.startMin ||
+        b.endMin - b.startMin - (a.endMin - a.startMin),
+    );
+
+    for (const item of byPriority) {
       let column = laneEnds.findIndex((end) => end <= item.startMin);
       if (column === -1) {
         column = laneEnds.length;

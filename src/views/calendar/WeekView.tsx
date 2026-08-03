@@ -32,6 +32,7 @@ import {
 } from "../../domain/block";
 import { uuidv7 } from "../../domain/id";
 import {
+  PRIORITY_SLOT,
   layoutDay,
   type DayLayout,
   type Overflow,
@@ -65,6 +66,11 @@ import {
   type UtcMillis,
 } from "../../domain/time";
 import { useBlocks } from "../../store/useBlocks";
+import { useSlots } from "../../store/useSlots";
+import SlotGhost from "../../components/SlotGhost";
+import SlotExplainer from "../../components/SlotExplainer";
+import LayersPopover from "../../components/LayersPopover";
+import type { Slot as GeneratedSlot } from "../../domain/generation/types";
 import { ui, useUiStore } from "../../store/useUiStore";
 import { Skeleton } from "../../components/Skeleton";
 
@@ -95,6 +101,16 @@ const INITIAL_SCROLL_HOUR = 7;
 type ScheduledEntry = CalendarEntry & { startUtc: number; endUtc: number };
 
 type DayBlock = Span & { block: ScheduledEntry };
+
+/* The calendar now draws two things. A real block is a commitment; a generated
+   slot is an intention that has not been agreed to yet, and the layout gives
+   it a lower priority so it can never push a block into the overflow marker. */
+type DaySlot = Span & { slot: GeneratedSlot };
+type DayItem = DayBlock | DaySlot;
+
+function isDaySlot(item: DayItem): item is DaySlot {
+  return "slot" in item;
+}
 
 type Slot = { dayIndex: number; minutes: number };
 
@@ -189,7 +205,7 @@ function overflowGeometry(entry: Overflow): CSSProperties {
 }
 
 type DayColumnProps = {
-  layout: DayLayout<DayBlock>;
+  layout: DayLayout<DayItem>;
   tz: string;
   nowUtc: number;
   hourHeight: HourHeight;
@@ -200,6 +216,9 @@ type DayColumnProps = {
   ghost: Preview | null;
   onTitleCommit: (id: string, title: string) => void;
   onTitleCancel: () => void;
+  onAssignSlot: (slot: GeneratedSlot) => void;
+  onExplainSlot: (slot: GeneratedSlot) => void;
+  slotLabel: (slot: GeneratedSlot) => string;
 };
 
 function DayColumn({
@@ -214,29 +233,47 @@ function DayColumn({
   ghost,
   onTitleCommit,
   onTitleCancel,
+  onAssignSlot,
+  onExplainSlot,
+  slotLabel,
 }: DayColumnProps) {
   return (
     <div className="cal-column cal-body relative min-w-0 flex-1 border-l border-hair">
-      {layout.placed.map(({ item, placement }) => (
-        <div
-          key={item.block.entryId}
-          className="absolute"
-          style={blockGeometry(item, placement)}
-        >
-          <BlockBox
-            block={item.block}
-            entryId={item.block.entryId}
-            tz={tz}
-            nowUtc={nowUtc}
-            heightPx={minutesToPixels(item.endMin - item.startMin, hourHeight)}
-            selected={item.block.entryId === selectedEntryId}
-            dragging={item.block.entryId === draggingEntryId}
-            editing={item.block.entryId === editingEntryId}
-            onTitleCommit={(title) => onTitleCommit(item.block.id, title)}
-            onTitleCancel={onTitleCancel}
-          />
-        </div>
-      ))}
+      {layout.placed.map(({ item, placement }) =>
+        isDaySlot(item) ? (
+          <div
+            key={item.slot.key}
+            className="absolute"
+            style={blockGeometry(item, placement)}
+          >
+            <SlotGhost
+              slot={item.slot}
+              label={slotLabel(item.slot)}
+              onAssign={onAssignSlot}
+              onExplain={onExplainSlot}
+            />
+          </div>
+        ) : (
+          <div
+            key={item.block.entryId}
+            className="absolute"
+            style={blockGeometry(item, placement)}
+          >
+            <BlockBox
+              block={item.block}
+              entryId={item.block.entryId}
+              tz={tz}
+              nowUtc={nowUtc}
+              heightPx={minutesToPixels(item.endMin - item.startMin, hourHeight)}
+              selected={item.block.entryId === selectedEntryId}
+              dragging={item.block.entryId === draggingEntryId}
+              editing={item.block.entryId === editingEntryId}
+              onTitleCommit={(title) => onTitleCommit(item.block.id, title)}
+              onTitleCancel={onTitleCancel}
+            />
+          </div>
+        ),
+      )}
 
       {layout.overflow.map((entry) => (
         <div
@@ -308,6 +345,28 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
     restoreBlock,
     refresh,
   } = useBlocks(range, tz);
+
+  const slotsApi = useSlots(range, blocks);
+  const [layersOpen, setLayersOpen] = useState(false);
+  const [explaining, setExplaining] = useState<GeneratedSlot | null>(null);
+
+  const generatorNameOf = useCallback(
+    (slot: GeneratedSlot): string =>
+      slotsApi.ruleset?.generators.find(
+        (generator) => generator.id === slot.generatorId,
+      )?.name ?? "a rule",
+    [slotsApi.ruleset],
+  );
+
+  /* What a ghost says on the grid. The intent, not a title: there is nothing
+     in it yet, and inventing one would make an empty slot read as filled. */
+  const slotLabel = useCallback(
+    (slot: GeneratedSlot): string =>
+      slot.intent.platform === undefined
+        ? slot.intent.kind
+        : `${slot.intent.platform} ${slot.intent.kind}`,
+    [],
+  );
 
   /* A pending action on a repeating block. SPEC defines only the exception
      mechanism, so the scope is asked for before anything is written. */
@@ -381,11 +440,15 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
     );
   }, [blocks, drag, days, tz]);
 
+  /* Both sources, one layout pass. Laying them out separately would let a
+     ghost and a block claim the same column, because neither pass would know
+     about the other. */
   const layouts = useMemo(
     () =>
       days.map((dayStart) => {
         const day = { start: dayStart, end: endOfLocalDay(dayStart, tz) };
-        const spans: DayBlock[] = effectiveBlocks
+
+        const blockSpans: DayItem[] = effectiveBlocks
           .filter(isScheduled)
           .filter((block) => block.startUtc < day.end && block.endUtc > day.start)
           .map((block) => ({
@@ -393,9 +456,22 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
             startMin: minutesWithinDay(block.startUtc, day, tz),
             endMin: minutesWithinDay(block.endUtc, day, tz),
           }));
-        return layoutDay(spans);
+
+        /* A slot already bound to a block would otherwise draw twice, once as
+           the ghost and once as the block it materialised into. */
+        const slotSpans: DayItem[] = slotsApi.slots
+          .filter((slot) => slot.blockId === undefined)
+          .filter((slot) => slot.startUtc < day.end && slot.endUtc > day.start)
+          .map((slot) => ({
+            slot,
+            startMin: minutesWithinDay(slot.startUtc, day, tz),
+            endMin: minutesWithinDay(slot.endUtc, day, tz),
+            priority: PRIORITY_SLOT,
+          }));
+
+        return layoutDay([...blockSpans, ...slotSpans]);
       }),
-    [effectiveBlocks, days, tz],
+    [effectiveBlocks, slotsApi.slots, days, tz],
   );
 
   const orderedBlocks = useMemo(
@@ -783,6 +859,11 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
         >
           Today
         </button>
+        <LayersPopover
+          api={slotsApi}
+          open={layersOpen}
+          onToggle={() => setLayersOpen((open) => !open)}
+        />
         <button
           type="button"
           aria-label="Previous week"
@@ -821,6 +902,31 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
           );
         })}
       </div>
+
+      {explaining !== null && (
+        <SlotExplainer
+          slot={explaining}
+          generatorName={generatorNameOf(explaining)}
+          tz={tz}
+          onSkipOnce={() => {
+            void slotsApi.skipOnce(explaining);
+            setExplaining(null);
+          }}
+          onSkipFuture={() => {
+            void slotsApi.skipFuture(explaining);
+            setExplaining(null);
+          }}
+          onPin={() => {
+            void slotsApi.pin(explaining);
+            setExplaining(null);
+          }}
+          onReset={() => {
+            void slotsApi.resetToRule(explaining);
+            setExplaining(null);
+          }}
+          onClose={() => setExplaining(null)}
+        />
+      )}
 
       <div className="relative min-h-0 flex-1">
         {loading && (
@@ -886,6 +992,9 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
                 ghost={createGhost !== null && createGhost.dayIndex === index ? createGhost : null}
                 onTitleCommit={handleTitleCommit}
                 onTitleCancel={ui.stopTitleEdit}
+                onAssignSlot={(slot) => setExplaining(slot)}
+                onExplainSlot={(slot) => setExplaining(slot)}
+                slotLabel={slotLabel}
               />
             ))}
           </div>

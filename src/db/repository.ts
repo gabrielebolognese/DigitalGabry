@@ -2239,3 +2239,29 @@ export async function applyRekeyPlan(plan: RekeyPlan): Promise<number> {
   await transaction(steps);
   return plan.pairs.length;
 }
+
+/* "Skip all future" is a rule change, not a pile of overrides: it closes the
+   version in force at that instant and opens nothing after it. Writing one
+   override per remaining day would be thousands of rows all saying the same
+   thing, and none of them would survive the rule being edited. */
+export async function closeGeneratorAt(
+  generatorId: string,
+  atUtc: number,
+): Promise<boolean> {
+  const versions = await listGeneratorVersions(generatorId);
+  const open = versions.filter(
+    (row) =>
+      (row.validTo === null || row.validTo > atUtc) &&
+      (row.validFrom === null || row.validFrom < atUtc),
+  );
+  if (open.length === 0) return false;
+
+  await transaction(
+    open.map((row) => ({
+      sql: `UPDATE generators SET valid_to = ?, updated_utc = ?
+             WHERE id = ? AND version = ?`,
+      params: [atUtc, Date.now(), row.id, row.version],
+    })),
+  );
+  return true;
+}
