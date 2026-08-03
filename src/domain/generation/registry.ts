@@ -30,6 +30,12 @@ export type EmitContext = {
      need it and must not open a second conversion path to get it. */
   midnightUtc: (localDate: string) => number;
   localDateOf: (utcMs: number) => string;
+  /* rotation and conditional wrap another generator rather than emitting from
+     nothing. Provided by the engine so they cannot reach into the registry
+     themselves, and depth guarded, because a rotation whose source is itself
+     would otherwise recurse until the stack gave out. */
+  emitInline: (generator: Generator, dates?: readonly string[]) => Candidate[];
+  generatorById: (id: string) => Generator | null;
 };
 
 export type KindModule<Config> = {

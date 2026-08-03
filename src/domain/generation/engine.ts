@@ -5,6 +5,15 @@ import { quota } from "./kinds/quota";
 import { rruleKind } from "./kinds/rruleKind";
 import { spread } from "./kinds/spread";
 import { weeklyGrid } from "./kinds/weeklyGrid";
+import { cron, pattern, relative } from "./kinds/simple";
+import {
+  batchProduction,
+  conditional,
+  deadlineBackfill,
+  derived,
+  gapFill,
+  rotation,
+} from "./kinds/composite";
 import { blackout } from "./modifiers/blackout";
 import { collision } from "./modifiers/collision";
 import { capacity, spacing } from "./modifiers/constrain";
@@ -13,6 +22,7 @@ import { modifierModuleFor, registerModifier } from "./modifiers/index";
 import { moduleFor, parseConfig, register } from "./registry";
 import { slotKeyOf } from "./slotKey";
 import { TzContext, makeResolver } from "./tz";
+import { versionAt } from "./versioning";
 import {
   DEFAULT_DST_POLICY,
   type Candidate,
@@ -52,6 +62,15 @@ register(interval);
 register(spread);
 register(quota);
 register(rruleKind);
+register(cron);
+register(pattern);
+register(relative);
+register(rotation);
+register(derived);
+register(deadlineBackfill);
+register(gapFill);
+register(batchProduction);
+register(conditional);
 
 registerModifier(jitter);
 registerModifier(snap);
@@ -99,7 +118,12 @@ function isActive(generator: Generator, window: GenerationWindow): boolean {
 }
 
 /* Stage 1. Layer descending then id, so the order a generator is processed in
-   never depends on how the ruleset happened to be stored. */
+   never depends on how the ruleset happened to be stored.
+
+   Every version whose range intersects the window is selected; which one
+   actually emits on a given date is decided per date in emitFor, so a window
+   spanning an edit renders the days before it with the old rule and the days
+   after it with the new one. Spec1.1 section 8. */
 function selectGenerators(
   ruleset: ResolvedRuleset,
   window: GenerationWindow,
@@ -109,8 +133,27 @@ function selectGenerators(
     .sort(
       (left, right) =>
         right.layer - left.layer ||
-        (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+        (left.id < right.id ? -1 : left.id > right.id ? 1 : 0) ||
+        left.version - right.version,
     );
+}
+
+/* The dates this version is the one in force for. Two versions of the same
+   generator therefore never both emit on the same date, which is what makes
+   ordinals, and so slot keys, unambiguous across an edit. */
+function datesForVersion(
+  generator: Generator,
+  siblings: readonly Generator[],
+  dates: readonly string[],
+  midnightUtc: (localDate: string) => number,
+): string[] {
+  if (siblings.length <= 1) return [...dates];
+
+  return dates.filter((localDate) => {
+    const at = midnightUtc(localDate);
+    const winner = versionAt(siblings, at);
+    return winner !== null && winner.version === generator.version;
+  });
 }
 
 function mergeIntent(base: SlotIntent, patch: Partial<SlotIntent> | undefined): SlotIntent {
@@ -120,6 +163,67 @@ function mergeIntent(base: SlotIntent, patch: Partial<SlotIntent> | undefined): 
 /* Stage 2. Emitted wide, in local dates, then clipped exactly in UTC at stage
    9. Generating only the requested window would lose a slot whose local day
    starts before it and whose instant falls inside it. */
+const MAX_WRAP_DEPTH = 4;
+
+/* Emits one generator's candidates without giving it an identity. Used both by
+   emitFor and, through the context, by rotation and conditional when they wrap
+   another generator. Depth guarded: a rotation whose source is itself, or a
+   pair pointing at each other, would otherwise recurse until the stack gave
+   out, and a config can say that. */
+function emitCandidates(
+  generator: Generator,
+  dates: readonly string[],
+  context: {
+    world: WorldState;
+    window: GenerationWindow;
+    tz: TzContext;
+    notices: Notice[];
+    byId: ReadonlyMap<string, Generator>;
+    depth: number;
+  },
+): Candidate[] {
+  const module = moduleFor(generator.kind);
+  if (module === null) return [];
+
+  const parsed = parseConfig(generator);
+  if (!parsed.ok) return [];
+
+  if (context.depth > MAX_WRAP_DEPTH) {
+    context.notices.push({
+      sourceId: generator.id,
+      kind: "wrap-too-deep",
+      message: "Generators wrap each other more deeply than is allowed",
+    });
+    return [];
+  }
+
+  const resolve = makeResolver(context.tz, generator.dst ?? DEFAULT_DST_POLICY);
+
+  try {
+    return module.emit(parsed.config, {
+      generator,
+      dates,
+      resolve,
+      world: context.world,
+      window: context.window,
+      notice: (kind, message) =>
+        context.notices.push({ sourceId: generator.id, kind, message }),
+      midnightUtc: (localDate) => context.tz.midnightUtc(localDate),
+      localDateOf: (utcMs) => context.tz.localDateOf(utcMs),
+      generatorById: (id) => context.byId.get(id) ?? null,
+      emitInline: (inner, innerDates) =>
+        emitCandidates(inner, innerDates ?? dates, {
+          ...context,
+          depth: context.depth + 1,
+        }),
+    });
+  } catch {
+    /* A kind that throws loses its own slots and nothing else. One broken
+       generator must not empty the calendar. */
+    return [];
+  }
+}
+
 function emitFor(
   generator: Generator,
   window: GenerationWindow,
@@ -127,42 +231,34 @@ function emitFor(
   collectTrace: boolean,
   contexts: Map<string, TzContext>,
   notices: Notice[],
+  byId: ReadonlyMap<string, Generator>,
+  siblings: readonly Generator[],
 ): Slot[] {
   const module = moduleFor(generator.kind);
   if (module === null) return [];
-
-  const parsed = parseConfig(generator);
-  if (!parsed.ok) return [];
 
   /* One context per timezone for the whole pass, so twenty generators over the
      same zone resolve each date once between them rather than twenty times. */
   const context = contextFor(contexts, generator.timezone);
 
-  const dates = context.datesBetween(
+  const allDates = context.datesBetween(
     window.startUtc - (module.lookbackDays + 1) * MS_PER_DAY,
     window.endUtc + LOOKAHEAD_DAYS * MS_PER_DAY,
   );
 
-  const resolve = makeResolver(context, generator.dst ?? DEFAULT_DST_POLICY);
+  const dates = datesForVersion(generator, siblings, allDates, (localDate) =>
+    context.midnightUtc(localDate),
+  );
+  if (dates.length === 0) return [];
 
-  let candidates: Candidate[];
-  try {
-    candidates = module.emit(parsed.config, {
-      generator,
-      dates,
-      resolve,
-      world,
-      window,
-      notice: (kind, message) =>
-        notices.push({ sourceId: generator.id, kind, message }),
-      midnightUtc: (localDate) => context.midnightUtc(localDate),
-      localDateOf: (utcMs) => context.localDateOf(utcMs),
-    });
-  } catch {
-    /* A kind that throws loses its own slots and nothing else. One broken
-       generator must not empty the calendar. */
-    return [];
-  }
+  const candidates = emitCandidates(generator, dates, {
+    world,
+    window,
+    tz: context,
+    notices,
+    byId,
+    depth: 0,
+  });
 
   /* Ordinals are assigned here, never by a kind, and always over the emitted
      order within a local date. Two generators emitting the same instant
@@ -352,10 +448,33 @@ export function generateDetailed(
 
   // 2. EMIT
   const contexts = new Map<string, TzContext>();
+  /* Latest version per id, for the wrapped-generator lookups. A rotation names
+     a generator, not a version of one. */
+  const byId = new Map<string, Generator>();
+  const byIdAll = new Map<string, Generator[]>();
+  for (const generator of ruleset.generators) {
+    const bucket = byIdAll.get(generator.id);
+    if (bucket === undefined) byIdAll.set(generator.id, [generator]);
+    else bucket.push(generator);
+    const current = byId.get(generator.id);
+    if (current === undefined || generator.version > current.version) {
+      byId.set(generator.id, generator);
+    }
+  }
+
   let slots: Slot[] = [];
   for (const generator of generators) {
     slots.push(
-      ...emitFor(generator, window, world, collectTrace, contexts, notices),
+      ...emitFor(
+        generator,
+        window,
+        world,
+        collectTrace,
+        contexts,
+        notices,
+        byId,
+        byIdAll.get(generator.id) ?? [generator],
+      ),
     );
   }
 
