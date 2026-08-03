@@ -67,8 +67,11 @@ import {
 } from "../../domain/time";
 import { useBlocks } from "../../store/useBlocks";
 import { useSlots } from "../../store/useSlots";
+import { activityTypeNameFor, type ContentItem } from "../../domain/content";
+import { applyAssignments } from "../../db/repository";
 import SlotGhost from "../../components/SlotGhost";
 import SlotExplainer from "../../components/SlotExplainer";
+import SlotPicker from "../../components/SlotPicker";
 import LayersPopover from "../../components/LayersPopover";
 import type { Slot as GeneratedSlot } from "../../domain/generation/types";
 import { ui, useUiStore } from "../../store/useUiStore";
@@ -349,6 +352,35 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
   const slotsApi = useSlots(range, blocks);
   const [layersOpen, setLayersOpen] = useState(false);
   const [explaining, setExplaining] = useState<GeneratedSlot | null>(null);
+  const [picking, setPicking] = useState<GeneratedSlot | null>(null);
+
+  /* Binding materialises the block, which is what makes the slot stop being an
+     intention. One transaction, so it is one entry in the undo history. */
+  const assignToSlot = useCallback(
+    async (slot: GeneratedSlot, item: ContentItem) => {
+      await applyAssignments([
+        {
+          slotKey: slot.key,
+          generatorId: slot.generatorId,
+          generatorVersion: slot.generatorVersion,
+          contentId: item.id,
+          title: item.title,
+          startUtc: slot.startUtc,
+          endUtc: slot.endUtc,
+          tz,
+          ...(slot.intent.platform === undefined
+            ? {}
+            : { platform: slot.intent.platform }),
+          projectId: item.projectId,
+          activityTypeName: activityTypeNameFor(item),
+        },
+      ]);
+      setPicking(null);
+      refresh();
+      slotsApi.refresh();
+    },
+    [tz, refresh, slotsApi],
+  );
 
   const generatorNameOf = useCallback(
     (slot: GeneratedSlot): string =>
@@ -903,6 +935,20 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
         })}
       </div>
 
+      {picking !== null && (
+        <SlotPicker
+          slot={picking}
+          tz={tz}
+          onAssign={(item) => void assignToSlot(picking, item)}
+          onCreate={() => setPicking(null)}
+          onExplain={() => {
+            setExplaining(picking);
+            setPicking(null);
+          }}
+          onClose={() => setPicking(null)}
+        />
+      )}
+
       {explaining !== null && (
         <SlotExplainer
           slot={explaining}
@@ -992,7 +1038,7 @@ export default function WeekView({ tz = DEFAULT_TZ }: WeekViewProps) {
                 ghost={createGhost !== null && createGhost.dayIndex === index ? createGhost : null}
                 onTitleCommit={handleTitleCommit}
                 onTitleCancel={ui.stopTitleEdit}
-                onAssignSlot={(slot) => setExplaining(slot)}
+                onAssignSlot={(slot) => setPicking(slot)}
                 onExplainSlot={(slot) => setExplaining(slot)}
                 slotLabel={slotLabel}
               />

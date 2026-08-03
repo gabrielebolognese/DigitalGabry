@@ -18,6 +18,7 @@ import {
   putOverride,
   clearOverride,
   closeGeneratorAt,
+  reconcileDeletedBlocks,
 } from "../db/repository";
 import { parseSlotKey } from "../domain/generation/slotKey";
 import { BLOCKS_CHANGED } from "./events";
@@ -91,6 +92,13 @@ export function useSlots(range: UtcRange, blocks: readonly CalendarEntry[]): Slo
           }
           return;
         }
+
+        /* Edge case 25. A block the user deleted must not come back, so its
+           binding goes first: with the binding gone the slot returns to
+           virtual, and nothing regenerates the block because only a binding
+           would. Done before the read, or the stale binding would be loaded
+           and the deleted block would appear to still be there. */
+        await reconcileDeletedBlocks();
 
         const [loaded, storedOverrides, storedBindings] = await Promise.all([
           loadRuleset(first.id),

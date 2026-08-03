@@ -21,6 +21,7 @@ import {
 import { BLOCKS_CHANGED } from "../../store/events";
 import { SkeletonList } from "../../components/Skeleton";
 import ImpactDialog, { type Impact } from "./ImpactDialog";
+import FillPanel from "./FillPanel";
 import PreviewStrip from "./PreviewStrip";
 import WeeklyGridEditor, { type GridTimes } from "./WeeklyGridEditor";
 
@@ -343,6 +344,15 @@ export default function ScheduleView({ tz = DEFAULT_TZ }: { tz?: string }) {
         </div>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+          {ruleset !== null && (
+            <FillPanel
+              ruleset={ruleset}
+              tz={tz}
+              nowUtc={nowUtc}
+              onChanged={reload}
+            />
+          )}
+
           {draft === null || ruleset === null ? (
             <span className="text-meta text-tertiary">
               Pick a rule to edit it, or make a new one
