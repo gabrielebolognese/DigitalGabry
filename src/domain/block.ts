@@ -34,6 +34,15 @@ export type BlockPayload = {
      platform heuristic, which cannot tell an Instagram reel from a story. */
   activityTypeName?: string;
   contentItemId?: string;
+  /* Phase 11.5D. Every block a rule produced records which rule, which slot
+     and which version of it. Invariant 22: a generated block must always be
+     traceable back to its origin, or the schedule becomes a thing that puts
+     items on your calendar for reasons you cannot recover. */
+  generatedBy?: {
+    generatorId: string;
+    slotKey: string;
+    version: number;
+  };
 };
 
 /* 0 none, 1 override, 2 cancellation on the is_exception column. A cancelled

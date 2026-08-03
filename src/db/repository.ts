@@ -4,6 +4,7 @@ import {
   BLOCK_CATEGORIES,
   BLOCK_KINDS,
   BLOCK_STATUSES,
+  newBlock,
   type Block,
   type BlockCategory,
   type BlockKind,
@@ -2264,4 +2265,108 @@ export async function closeGeneratorAt(
     })),
   );
   return true;
+}
+
+/* Spec1.1 section 13, item 7. Binding a slot materialises a block that knows
+   where it came from: payload.generatedBy carries the generator, the slot key
+   and the version, so a block can always be traced back to the rule that
+   produced it. Invariant 22. */
+export type MaterializeRequest = {
+  slotKey: string;
+  generatorId: string;
+  generatorVersion: number;
+  contentId: string;
+  title: string;
+  startUtc: number;
+  endUtc: number;
+  tz: string;
+  platform?: string;
+  projectId?: string | null;
+  activityTypeName?: string;
+};
+
+function materializeSteps(
+  request: MaterializeRequest,
+  blockId: string,
+  nowUtc: number,
+): { block: Block; step: Step } {
+  const block: Block = {
+    ...newBlock({
+      id: blockId,
+      kind: "post",
+      title: request.title === "" ? "Untitled" : request.title,
+      startUtc: request.startUtc,
+      endUtc: request.endUtc,
+      tz: request.tz,
+      nowUtc,
+    }),
+    projectId: request.projectId ?? null,
+    payload: {
+      ...(request.platform === undefined
+        ? {}
+        : { platform: request.platform as BlockPayload["platform"] }),
+      ...(request.activityTypeName === undefined
+        ? {}
+        : { activityTypeName: request.activityTypeName }),
+      contentItemId: request.contentId,
+      generatedBy: {
+        generatorId: request.generatorId,
+        slotKey: request.slotKey,
+        version: request.generatorVersion,
+      },
+    },
+  };
+
+  return { block, step: insertStep(block) };
+}
+
+/* Every block insert, every content link and every binding in one ops batch,
+   so auto-filling thirty days is one entry in the undo history rather than
+   ninety. Spec1.1 13: applied or rejected as one transaction. */
+export async function applyAssignments(
+  requests: readonly MaterializeRequest[],
+): Promise<{ batch: string | null; blockIds: string[] }> {
+  if (requests.length === 0) return { batch: null, blockIds: [] };
+
+  const nowUtc = Date.now();
+  const changes: EntityChange[] = [];
+  const blockIds: string[] = [];
+  const bindings: { slotKey: string; generatorId: string; contentId: string; blockId: string }[] =
+    [];
+
+  for (const request of requests) {
+    const blockId = uuidv7();
+    const { step } = materializeSteps(request, blockId, nowUtc);
+
+    changes.push({ op: "insert", entity: "block", entityId: blockId, step });
+    changes.push({
+      op: "update",
+      entity: "content_item",
+      entityId: request.contentId,
+      changes: [
+        { field: "block_id", oldValue: null, newValue: blockId },
+        { field: "status", oldValue: "ready", newValue: "scheduled" },
+      ],
+    });
+
+    blockIds.push(blockId);
+    bindings.push({
+      slotKey: request.slotKey,
+      generatorId: request.generatorId,
+      contentId: request.contentId,
+      blockId,
+    });
+  }
+
+  const batch = await applyBatch(changes);
+
+  /* Bindings are not ops logged: they are derived from the block, and undoing
+     the batch tombstones the block, after which reconcileDeletedBlocks removes
+     them. Writing them into the ops log too would make one action take two
+     undos. */
+  for (const binding of bindings) {
+    await putBinding(binding.slotKey, binding.generatorId, binding.contentId, binding.blockId);
+  }
+
+  return { batch, blockIds };
 }

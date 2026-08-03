@@ -6,7 +6,7 @@ A local-first desktop calendar and momentum tracker. Tauri v2, React, TypeScript
 
 Part two extends the app: `Spec2.md` covers content surfaces, `Spec1.1.md` the generation layer. Where documents conflict, `SPEC.md` wins on tokens and invariants, `Spec1.1.md` wins on scheduling semantics. `PLAN.md` records three corrections where those two documents went stale, and those corrections win over the spec text.
 
-**Current phase: 11.5C, calendar rendering and editors.** Phases 0 through 11.5B are merged. Update this line when a phase merges. One branch per phase named `phase-NN-slug`, one commit, and a cleared context before the next one.
+**Current phase: 12, X posts.** Phases 0 through 11.5D are merged, so the generation layer is complete. Update this line when a phase merges. One branch per phase named `phase-NN-slug`, one commit, and a cleared context before the next one.
 
 **Migration numbers.** `001_init`, `002_recurrence`, `003_settings` exist. Content is **004**, generation is **005**. Both spec texts name numbers that are already taken.
 
