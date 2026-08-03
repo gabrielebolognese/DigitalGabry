@@ -4,6 +4,7 @@ import { DEFAULT_TZ } from "../../domain/time";
 import { open } from "@tauri-apps/plugin-dialog";
 import { pictureDir as pictures } from "@tauri-apps/api/path";
 import { DEFAULT_SOFT_LIMIT, HARD_LIMIT } from "../../domain/xPost";
+import { readPrompt, resetPrompt, writePrompt } from "../../content/linkedin/prompt";
 import { maskKey, readApiKey, writeApiKey } from "../../panel/apiKey";
 import {
   readBackupSettings,
@@ -65,6 +66,13 @@ export default function SettingsView({ tz = DEFAULT_TZ }: { tz?: string }) {
       setKeyBusy(false);
     }
   }, [keyDraft, refreshKeyState]);
+
+  const [prompt, setPrompt] = useState<string | null>(null);
+  const [promptNote, setPromptNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    void readPrompt().then(setPrompt);
+  }, []);
 
   const [backup, setBackup] = useState<BackupSettings | null>(null);
   const [backupBusy, setBackupBusy] = useState(false);
@@ -307,6 +315,50 @@ export default function SettingsView({ tz = DEFAULT_TZ }: { tz?: string }) {
             <span className="text-micro text-disabled">
               Export is one directional, it is never read back as a source of truth
             </span>
+          </div>
+        )}
+
+        {/* Spec2 3.2: editable here rather than baked into the build, because
+            iterating on a prompt is the main way this gets better and needing
+            a rebuild to change a sentence means it does not get iterated on. */}
+        {prompt !== null && (
+          <div className="flex flex-col gap-2">
+            <span className="text-micro uppercase text-tertiary">
+              LinkedIn image prompt
+            </span>
+            <textarea
+              rows={10}
+              className={`${CELL} font-mono text-micro`}
+              aria-label="LinkedIn image system prompt"
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+            />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  void writePrompt(prompt).then(() => setPromptNote("Saved"));
+                }}
+                className="motion-hover rounded-control border border-line px-2 py-1 text-meta text-primary hover:bg-hover"
+              >
+                Save prompt
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void resetPrompt().then((text) => {
+                    setPrompt(text);
+                    setPromptNote("Back to the bundled default");
+                  });
+                }}
+                className="motion-hover rounded-control px-2 py-1 text-meta text-tertiary hover:text-secondary"
+              >
+                Reset to default
+              </button>
+              {promptNote !== null && (
+                <span className="text-meta text-secondary">{promptNote}</span>
+              )}
+            </div>
           </div>
         )}
 

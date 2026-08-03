@@ -13,6 +13,7 @@ import {
 import type { Project } from "../../db/repository";
 import type { ContentApi } from "../../store/useContent";
 import XCard from "./x/XCard";
+import LinkedInCard from "./linkedin/LinkedInCard";
 
 /* Spec2 1.6. One grid shell for all four platforms; they differ in the card
    body, which arrives in phases 12 to 15, not in the shell around it. */
@@ -177,6 +178,14 @@ export default function ContentGrid({
                   softLimitDefault={softLimitDefault}
                   onOpen={onOpen}
                   onCopy={onCopy}
+                  onPostThis={onPostThis}
+                />
+              ) : item.platform === "linkedin" && onPostThis !== undefined ? (
+                <LinkedInCard
+                  key={item.id}
+                  item={item}
+                  imageUrl={imageUrlFor?.(item) ?? null}
+                  onOpen={onOpen}
                   onPostThis={onPostThis}
                 />
               ) : (
