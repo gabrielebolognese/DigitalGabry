@@ -135,6 +135,11 @@
 
   /* Content surfaces, Spec2 1.6 and 2.2. */
   --x-card-aspect: 16 / 9;
+  --li-card-aspect: 4 / 5;
+  --li-editor-w: 480px;
+  --li-thumb-w: 64px;
+  /* The capture surface is 1080x1350; the preview shows it at a twelfth. */
+  --li-preview-scale: 0.0833333;
   --content-card-min: 260px;
   --content-card-h: 132px;
   --content-grid-gap: 12px;

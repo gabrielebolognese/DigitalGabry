@@ -12,6 +12,7 @@ import { useContent } from "../../store/useContent";
 import { useUiStore } from "../../store/useUiStore";
 import ContentGrid from "./ContentGrid";
 import XEditor from "./x/XEditor";
+import LinkedInEditor from "./linkedin/LinkedInEditor";
 import Toast from "../../components/Toast";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { copyImageInstead, postThis } from "../../content/postThis";
@@ -190,7 +191,18 @@ export default function ContentView() {
         onPostThis={(item) => void runPostThis(item)}
       />
 
-      {editing !== null && (
+      {editing !== null && editing.platform === "linkedin" && (
+        <LinkedInEditor
+          item={editing}
+          onPatch={async (patch) => {
+            await api.patchItem(editing.id, patch);
+            setEditing({ ...editing, ...patch });
+          }}
+          onClose={() => setEditing(null)}
+        />
+      )}
+
+      {editing !== null && editing.platform === "x" && (
         <XEditor
           item={editing}
           softLimitDefault={softLimit}

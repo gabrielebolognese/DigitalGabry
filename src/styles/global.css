@@ -465,6 +465,35 @@ body,
   width: 100%;
 }
 
+.li-card-image {
+  aspect-ratio: var(--li-card-aspect);
+  width: 100%;
+}
+
+.li-editor {
+  width: var(--li-editor-w);
+}
+
+/* The template renders at its real 1080x1350 and is scaled down to fit, rather
+   than being laid out smaller: what the preview shows is then the same DOM the
+   capture rasterises, so a line that wraps here wraps in the PNG. */
+.li-preview {
+  aspect-ratio: var(--li-card-aspect);
+  width: 100%;
+}
+
+.li-preview-scale {
+  transform: scale(var(--li-preview-scale));
+  transform-origin: top left;
+  width: 1080px;
+  height: 1350px;
+}
+
+.li-thumb {
+  width: var(--li-thumb-w);
+  aspect-ratio: var(--li-card-aspect);
+}
+
 /* Content grid, Spec2 1.6. */
 .content-grid {
   display: grid;

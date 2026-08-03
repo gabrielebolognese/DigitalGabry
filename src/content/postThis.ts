@@ -2,6 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { writeText, writeImage } from "@tauri-apps/plugin-clipboard-manager";
 import { X_COMPOSER_URL } from "../domain/xPost";
+
+/* Spec2 3.5: the same export as X. LinkedIn has no compose deep link, so this
+   is the feed, where the composer is one click away. */
+export const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
 import { localDateOf } from "../domain/time";
 import type { Asset, ContentItem } from "../domain/content";
 import { outboxFileName, joinPath } from "../vault/paths";
@@ -27,6 +31,10 @@ export type PostThisRequest = {
   nowUtc: number;
   tz: string;
 };
+
+function composerFor(platform: string): string {
+  return platform === "linkedin" ? LINKEDIN_FEED_URL : X_COMPOSER_URL;
+}
 
 export async function postThis(request: PostThisRequest): Promise<PostThisResult> {
   const { item, asset, nowUtc, tz } = request;
@@ -61,7 +69,7 @@ export async function postThis(request: PostThisRequest): Promise<PostThisResult
   }
 
   // 4. The composer.
-  await openUrl(X_COMPOSER_URL);
+  await openUrl(composerFor(item.platform));
 
   return { outboxPath, imageStaged: asset !== null, prunedOlderFiles: pruned };
 }

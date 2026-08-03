@@ -6,7 +6,7 @@ A local-first desktop calendar and momentum tracker. Tauri v2, React, TypeScript
 
 Part two extends the app: `Spec2.md` covers content surfaces, `Spec1.1.md` the generation layer. Where documents conflict, `SPEC.md` wins on tokens and invariants, `Spec1.1.md` wins on scheduling semantics. `PLAN.md` records three corrections where those two documents went stale, and those corrections win over the spec text.
 
-**Current phase: 13, LinkedIn generation pipeline.** Phases 0 through 12 are merged. Update this line when a phase merges. One branch per phase named `phase-NN-slug`, one commit, and a cleared context before the next one.
+**Current phase: 14, Instagram video manager.** Phases 0 through 13 are merged. Update this line when a phase merges. One branch per phase named `phase-NN-slug`, one commit, and a cleared context before the next one.
 
 **Migration numbers.** `001_init`, `002_recurrence`, `003_settings` exist. Content is **004**, generation is **005**. Both spec texts name numbers that are already taken.
 
@@ -103,8 +103,10 @@ From `Spec2.md` section 8 and `Spec1.1.md` section 18. They extend `SPEC.md` sec
 ## Self-check before saying a phase is done
 
 ```bash
-# brand.css is excluded from phase 13 onward, and only then. It is the one other
-# file allowed a literal color, and Spec2 invariant 16 confines it to templates/.
+# brand.css is the one other file allowed a literal color, and it exists as of
+# phase 13. Spec2 invariant 12 confines it to the templates folder, which the
+# second grep below enforces: exclusion without confinement would be a licence
+# to put brand orange anywhere.
 rg -n '#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(' src --glob '!**/tokens.css' --glob '!**/brand.css'  # must be empty
 rg -n 'box-shadow' src --glob '!**/tokens.css' --glob '!**/global.css'   # must be empty
 rg -n 'font-weight:\s*[67]00|font-(semibold|bold)' src                   # must be empty
