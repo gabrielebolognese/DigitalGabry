@@ -1,16 +1,23 @@
 import {
   Calendar,
+  CalendarCog,
   LayoutGrid,
   Settings,
   TrendingUp,
   type LucideIcon,
 } from "lucide-react";
 
-export type ViewId = "calendar" | "content" | "momentum" | "settings";
+export type ViewId =
+  | "calendar"
+  | "content"
+  | "schedule"
+  | "momentum"
+  | "settings";
 
 export const VIEW_LABELS: Record<ViewId, string> = {
   calendar: "Calendar",
   content: "Content",
+  schedule: "Schedule",
   momentum: "Momentum",
   settings: "Settings",
 };
@@ -23,6 +30,7 @@ type RailItem = {
 const PRIMARY_ITEMS: readonly RailItem[] = [
   { id: "calendar", icon: Calendar },
   { id: "content", icon: LayoutGrid },
+  { id: "schedule", icon: CalendarCog },
   { id: "momentum", icon: TrendingUp },
 ];
 

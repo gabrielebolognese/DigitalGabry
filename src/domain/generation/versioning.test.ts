@@ -605,3 +605,80 @@ describe("memoisation", () => {
     expect(cache.size).toBeLessThanOrEqual(32);
   });
 });
+
+describe("edge case 11: a moved slot survives a rule edit", () => {
+  const window = {
+    startUtc: utc("2026-08-03T00:00:00Z"),
+    endUtc: utc("2026-08-05T00:00:00Z"),
+  };
+
+  it("keeps the hand-set time when the rule's time changes underneath it", () => {
+    const before = ruleset(generator({ config: { times: ["09:00", "17:00"] } }));
+    const target = generate(before, window)[0];
+    expect(target).toBeDefined();
+
+    const movedTo = (target?.startUtc ?? 0) + 45 * 60_000;
+    const override = [
+      { slotKey: target?.key ?? "", action: "move" as const, movedStartUtc: movedTo },
+    ];
+
+    /* The rule's first time moves from 09:00 to 10:00. Identity is the ordinal,
+       not the timestamp, so the override still attaches to the same slot. */
+    const after = ruleset(generator({ config: { times: ["10:00", "17:00"] } }));
+    const found = generate(after, window, override).find(
+      (slot) => slot.key === target?.key,
+    );
+
+    expect(found?.startUtc).toBe(movedTo);
+    expect(found?.state).toBe("moved");
+  });
+
+  it("a skip also survives, which is the same property", () => {
+    const before = ruleset(generator({ config: { times: ["09:00", "17:00"] } }));
+    const target = generate(before, window)[0];
+    const skip = [{ slotKey: target?.key ?? "", action: "skip" as const }];
+
+    const after = ruleset(generator({ config: { times: ["10:00", "17:00"] } }));
+    const slots = generate(after, window, skip);
+    expect(slots.some((slot) => slot.key === target?.key)).toBe(false);
+  });
+});
+
+describe("preview repaint budget, Spec1.1 12.4", () => {
+  it("regenerates fourteen days of one rule well inside a frame", () => {
+    const rules = ruleset(
+      generator({
+        kind: "weekly-grid",
+        config: {
+          times: {
+            mon: ["08:00", "12:00", "18:00", "22:00"],
+            tue: ["09:00", "13:00", "19:00"],
+            wed: ["08:00", "12:00", "18:00", "22:00"],
+            thu: ["09:00", "13:00", "19:00"],
+            fri: ["08:00", "12:00", "17:00"],
+            sat: ["11:00", "20:00"],
+            sun: [],
+          },
+        },
+      }),
+    );
+    const window = {
+      startUtc: utc("2026-08-03T00:00:00Z"),
+      endUtc: utc("2026-08-17T00:00:00Z"),
+    };
+
+    for (let run = 0; run < 3; run += 1) generate(rules, window);
+
+    let best = Infinity;
+    for (let run = 0; run < 15; run += 1) {
+      const began = performance.now();
+      generate(rules, window);
+      const elapsed = performance.now() - began;
+      if (elapsed < best) best = elapsed;
+    }
+
+    /* The strip runs this twice per keystroke, once for the draft and once for
+       the saved rule, so the budget for one pass is half a frame. */
+    expect(best).toBeLessThan(8);
+  });
+});
