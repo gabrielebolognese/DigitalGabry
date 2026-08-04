@@ -6,9 +6,9 @@ A local-first desktop calendar and momentum tracker. Tauri v2, React, TypeScript
 
 Part two extends the app: `Spec2.md` covers content surfaces, `Spec1.1.md` the generation layer. Where documents conflict, `SPEC.md` wins on tokens and invariants, `Spec1.1.md` wins on scheduling semantics. `PLAN.md` records three corrections where those two documents went stale, and those corrections win over the spec text.
 
-**Current phase: 15, YouTube shell.** Phases 0 through 14 are merged. Update this line when a phase merges. One branch per phase named `phase-NN-slug`, one commit, and a cleared context before the next one.
+**All planned phases are merged**, 0 through 15 including the generation layer. The YouTube surface is a deliberate shell: its specification is deferred, so do not invent chapters, thumbnails, SEO fields or retention planning for it. Anything further needs a new spec and a new phase in `PLAN.md`. Update this line when a phase merges. One branch per phase named `phase-NN-slug`, one commit, and a cleared context before the next one.
 
-**Migration numbers.** `001_init`, `002_recurrence`, `003_settings` exist. Content is **004**, generation is **005**. Both spec texts name numbers that are already taken.
+**Migration numbers.** `001_init`, `002_recurrence`, `003_settings`, `004_content`, `005_generation`, `006_content_tags`. Both spec texts name numbers that were already taken; the next is **007**.
 
 ## Commands
 
