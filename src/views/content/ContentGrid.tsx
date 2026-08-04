@@ -166,7 +166,11 @@ export default function ContentGrid({
           <span className="text-meta text-cat-deadline">{api.error.message}</span>
         ) : items.length === 0 ? (
           <span className="text-meta text-tertiary">
-            Nothing here yet, start with a new item
+            {/* Spec2 5 item 7, verbatim: the surface is deliberately unbuilt
+                and says so, rather than pretending to be empty. */}
+            {platform === "youtube"
+              ? "Video planning is not set up yet."
+              : "Nothing here yet, start with a new item"}
           </span>
         ) : (
           <div className="content-grid">

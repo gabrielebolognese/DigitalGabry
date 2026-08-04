@@ -108,6 +108,16 @@ export function isUnfinished(status: ContentStatus): boolean {
 
 export type ContentPayload = Record<string, unknown>;
 
+/* Spec2 section 5, item 6. Intentionally unspecified.
+ *
+ * The YouTube specification is deferred, and inventing structure now
+ * guarantees rework: chapters, thumbnails, SEO fields and retention planning
+ * are all plausible and none of them has been decided, so a guess would have
+ * to be migrated away from rather than built on. An empty type is the honest
+ * statement that nothing is known yet.
+ */
+export type YouTubePayload = Record<string, never>;
+
 export type ContentItem = {
   id: string;
   platform: ContentPlatform;
@@ -194,6 +204,8 @@ export function activityTypeNameFor(item: ContentItem): string {
       return "X post";
     case "linkedin":
       return "LinkedIn post";
+    /* Resolved when the YouTube specification lands. Defaults to long form,
+       which is the only YouTube activity type a video could reasonably be. */
     case "youtube":
       return "YouTube long form";
     case "instagram":

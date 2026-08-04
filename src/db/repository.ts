@@ -2370,3 +2370,47 @@ export async function applyAssignments(
 
   return { batch, blockIds };
 }
+
+/* Mirrors setBlockTags exactly, against the same tags table, so a tag means
+   one thing across the app. Spec2 gives content items no tag storage; see
+   migration 006 for why this exists. */
+export async function setContentTags(
+  contentId: string,
+  names: readonly string[],
+): Promise<void> {
+  const wanted = names.map((name) => name.trim()).filter((name) => name !== "");
+
+  for (const name of wanted) {
+    const existing = await query<{ id: string }>(
+      "SELECT id FROM tags WHERE name = ?",
+      [name],
+    );
+    if (existing.length === 0) {
+      await execute(
+        `INSERT INTO tags (id, name, created_utc, hlc, device_id) VALUES (?, ?, ?, ?, ?)`,
+        [uuidv7(), name, Date.now(), "", ""],
+      );
+    }
+  }
+
+  await execute("DELETE FROM content_tags WHERE content_id = ?", [contentId]);
+
+  for (const name of wanted) {
+    await execute(
+      `INSERT OR IGNORE INTO content_tags (content_id, tag_id)
+       SELECT ?, id FROM tags WHERE name = ?`,
+      [contentId, name],
+    );
+  }
+}
+
+export async function contentTags(contentId: string): Promise<string[]> {
+  const rows = await query<{ name: string }>(
+    `SELECT t.name FROM content_tags ct
+       JOIN tags t ON t.id = ct.tag_id
+      WHERE ct.content_id = ? AND t.deleted_utc IS NULL
+      ORDER BY t.name`,
+    [contentId],
+  );
+  return rows.map((row) => row.name);
+}

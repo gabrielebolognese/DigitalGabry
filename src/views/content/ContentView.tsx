@@ -14,6 +14,7 @@ import ContentGrid from "./ContentGrid";
 import XEditor from "./x/XEditor";
 import LinkedInEditor from "./linkedin/LinkedInEditor";
 import InstagramEditor from "./instagram/InstagramEditor";
+import ContentEditor from "./ContentEditor";
 import { sendToPhone } from "../../content/postThis";
 import { formatScriptForFilming } from "../../domain/instagram";
 import Toast from "../../components/Toast";
@@ -224,6 +225,25 @@ export default function ContentView() {
             await api.patchItem(editing.id, patch);
             setEditing({ ...editing, ...patch });
           }}
+          onClose={() => setEditing(null)}
+        />
+      )}
+
+      {/* The default, not a case. Anything without an editor of its own gets
+          the shared one, so adding a platform needs no line here and YouTube
+          is not named: "zero platform specific code paths", literally. */}
+      {editing !== null &&
+        editing.platform !== "x" &&
+        editing.platform !== "linkedin" && (
+        <ContentEditor
+          item={editing}
+          platform={editing.platform}
+          projects={projects}
+          onPatch={async (patch) => {
+            await api.patchItem(editing.id, patch);
+            setEditing({ ...editing, ...patch });
+          }}
+          onChanged={api.refresh}
           onClose={() => setEditing(null)}
         />
       )}
